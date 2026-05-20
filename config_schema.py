@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from hydra.core.config_store import ConfigStore
 
@@ -57,17 +57,19 @@ class ModelConfig:
         "B32",
         "Laion",
     )  # List of models to use: L336, B16, B32, Laion
+    use_gram_loss: bool = False        # 新增：启用 Gram Matrix 风格损失
+    gram_loss_weight: float = 1.0      # 新增：Gram loss 权重
 
 
 @dataclass
 class MainConfig:
     """Main configuration combining all sub-configs"""
 
-    data: DataConfig = DataConfig()
-    optim: OptimConfig = OptimConfig()
-    model: ModelConfig = ModelConfig()
-    wandb: WandbConfig = WandbConfig()
-    blackbox: BlackboxConfig = BlackboxConfig()
+    data: DataConfig = field(default_factory=DataConfig)
+    optim: OptimConfig = field(default_factory=OptimConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    wandb: WandbConfig = field(default_factory=WandbConfig)
+    blackbox: BlackboxConfig = field(default_factory=BlackboxConfig)
     attack: str = "fgsm"  # can be [fgsm, mifgsm, pgd]
 
 
@@ -76,9 +78,13 @@ class MainConfig:
 class Ensemble3ModelsConfig(MainConfig):
     """Configuration for ensemble_3models.py"""
 
-    data: DataConfig = DataConfig(batch_size=1)
-    model: ModelConfig = ModelConfig(
-        use_source_crop=True, use_target_crop=True, backbone=["B16", "B32", "Laion"]
+    data: DataConfig = field(default_factory=lambda: DataConfig(batch_size=1))
+    model: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            use_source_crop=True,
+            use_target_crop=True,
+            backbone=["B16", "B32", "Laion"],
+        )
     )
 
 

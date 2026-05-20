@@ -7,7 +7,7 @@ from torchvision import transforms
 class ClipL336FeatureExtractor(BaseFeatureExtractor):
     def __init__(self):
         super(ClipL336FeatureExtractor, self).__init__()
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14-336")
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14-336").cuda()
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14-336")
         self.normalizer = transforms.Compose(
         [

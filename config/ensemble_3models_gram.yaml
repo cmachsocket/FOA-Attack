@@ -1,0 +1,41 @@
+# Configuration for FOA-Attack + Gram Matrix 风格损失
+# 2b(Gram Loss) + 3 方案：全局纹理对齐 + 背景抑制
+# 使用方式: python generate_adversarial_samples_foa_attack.py --config-name ensemble_3models_gram
+
+defaults:
+  - _self_
+
+data:
+  batch_size: 1
+  num_samples: 10
+  output: "./foa_attack_output"
+  cle_data_path: "resources/images/bigscale"
+  tgt_data_path: "resources/images/horse_riding_validation"
+
+optim:
+  alpha: 1.0
+  epsilon: 16
+  steps: 300
+
+model:
+  input_res: 224
+  use_source_crop: true
+  use_target_crop: true
+  crop_scale: [0.5, 0.9]
+  ensemble: true
+  device: "cuda:0"
+  backbone: ["B16", "B32", "Laion"]
+  # === 新增：Gram Matrix 风格损失 ===
+  use_gram_loss: true           # 启用 Gram Loss（大局/纹理迁移）
+  gram_loss_weight: 2.0         # Gram Loss 权重，建议范围 0.5~2.0
+
+wandb:
+  project: "local_adversarial_attack"
+  entity: ???  # fill your wandb entity
+
+blackbox:
+  model_name: "gemini"
+  batch_size: 1
+  timeout: 30
+
+attack: 'fgsm'  # [fgsm, mifgsm, pgd]

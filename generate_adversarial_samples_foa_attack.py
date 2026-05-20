@@ -2,11 +2,38 @@ import os
 import json
 import hashlib
 import random
+import argparse
 import torchvision.transforms as transforms
 import numpy as np
 import torch
 import torchvision
 from PIL import Image
+
+
+def _patch_argparse_help_for_hydra_py314() -> None:
+    """Compat patch for hydra-core 1.3.x on Python 3.14 argparse help checks."""
+    formatter_cls = argparse.HelpFormatter
+    if getattr(formatter_cls, "_hydra_py314_help_patch", False):
+        return
+
+    original_expand_help = formatter_cls._expand_help
+
+    def _expand_help_compat(self, action):
+        help_obj = action.help
+        if help_obj is not None and not isinstance(help_obj, str):
+            try:
+                action.help = str(help_obj)
+                return original_expand_help(self, action)
+            finally:
+                action.help = help_obj
+        return original_expand_help(self, action)
+
+    formatter_cls._expand_help = _expand_help_compat
+    formatter_cls._hydra_py314_help_patch = True
+
+
+_patch_argparse_help_for_hydra_py314()
+
 import hydra
 from omegaconf import DictConfig
 import os
@@ -28,7 +55,8 @@ from surrogates import (
     EnsembleFeatureLoss_OT_Auto,
     EnsembleFeatureExtractor,
     EnsembleFeatureExtractor_ot,
-    EnsembleFeatureLoss_OT_foa_attack
+    EnsembleFeatureLoss_OT_foa_attack,
+    EnsembleFeatureLoss_OT_Gram,
 )
 
 from utils import hash_training_config, setup_wandb, ensure_dir
@@ -80,7 +108,10 @@ def get_ensemble_loss(cfg: MainConfig, models: List[nn.Module]):
     return ensemble_loss
 
 def get_ensemble_loss_ot(cfg: MainConfig, models: List[nn.Module]):
-    ensemble_loss_ot = EnsembleFeatureLoss_OT_foa_attack(models,cluster_number=10)
+    if getattr(cfg.model, 'use_gram_loss', False):
+        ensemble_loss_ot = EnsembleFeatureLoss_OT_Gram(models, cluster_number=10)
+    else:
+        ensemble_loss_ot = EnsembleFeatureLoss_OT_foa_attack(models, cluster_number=10)
     return ensemble_loss_ot
 
 
@@ -168,7 +199,7 @@ def main(cfg: MainConfig):
         if cfg.data.batch_size * (i + 1) > cfg.data.num_samples:
             break
 
-        print(f"\nProcessing image {i+1}/{cfg.data.num_samples//cfg.data.batch_size}")
+        print(f"\nProcessing image {i+1}/{cfg.data.num_samples//cfg.data.batch_size} | target: {path_tgt[0].split('/')[-2]}/{path_tgt[0].split('/')[-1]}")
 
         attack_imgpair(
             cfg=cfg,
@@ -178,6 +209,7 @@ def main(cfg: MainConfig):
             img_index=i,
             image_org=image_org,
             path_org=path_org,
+            path_tgt=path_tgt,
             image_tgt=image_tgt,
             target_crop=target_crop,
         )
@@ -194,8 +226,10 @@ def attack_imgpair(
     img_index: int,
     image_org: torch.Tensor,
     path_org: List[str],
+    path_tgt: List[str],
     image_tgt: torch.Tensor,
 ):
+    print(f"  source: {path_org[0].split('/')[-2]}/{path_org[0].split('/')[-1]}  →  target: {path_tgt[0].split('/')[-2]}/{path_tgt[0].split('/')[-1]}")
     image_org, image_tgt = image_org.to(cfg.model.device), image_tgt.to(
         cfg.model.device
     )
@@ -318,15 +352,29 @@ def fgsm_attack(
         metrics["global_similarity"] = global_sim.item()
 
         if cfg.model.use_source_crop:
-            # If using source crop, calculate additional local similarity
             local_cropped = source_crop(adv_image)
             local_features,local_features_local = ensemble_extractor(local_cropped)
             local_sim = ensemble_loss(local_features,local_features_local)
             loss = local_sim
             metrics["local_similarity"] = local_sim.item()
         else:
-            # Otherwise use global similarity as loss
             loss = global_sim
+
+        # === Gram Matrix 风格损失：迁移整体纹理/大局 ===
+        # 整块包 no_grad：Gram loss 只提供标量值给主 loss，不参与图构建
+        gram_loss_total = torch.tensor(0.0, device=delta.device)
+        if getattr(cfg.model, 'use_gram_loss', False):
+            gram_weight = getattr(cfg.model, 'gram_loss_weight', 1.0)
+            models_list = ensemble_extractor.extractors if hasattr(ensemble_extractor, 'extractors') else [ensemble_extractor]
+            with torch.no_grad():
+                for idx, model in enumerate(models_list):
+                    _, gram_tgt = model.spatial_gram_features(target_crop(image_tgt))
+                    _, gram_adv = model.spatial_gram_features(adv_image)
+                    g_loss = ensemble_loss.gram_loss(gram_adv.squeeze(0), idx)
+                    gram_loss_total = gram_loss_total + g_loss
+            gram_loss_total = gram_loss_total / len(models_list)
+            loss = loss + gram_weight * gram_loss_total
+            metrics["gram_loss"] = gram_loss_total.item()
 
         # Log current metrics
         log_metrics(pbar, metrics, img_index, epoch)
@@ -400,7 +448,7 @@ def mifgsm_attack(
 
         # Forward pass
         adv_image = image_org + delta
-        adv_features = ensemble_extractor(adv_image)
+        adv_features, adv_features_local = ensemble_extractor(adv_image)
 
         # Calculate metrics
         metrics = {
@@ -409,19 +457,32 @@ def mifgsm_attack(
         }
 
         # Calculate loss based on configuration
-        global_sim = ensemble_loss(adv_features)
+        global_sim = ensemble_loss(adv_features, adv_features_local)
         metrics["global_similarity"] = global_sim.item()
 
         if cfg.model.use_source_crop:
-            # If using source crop, calculate additional local similarity
             local_cropped = source_crop(adv_image)
-            local_features = ensemble_extractor(local_cropped)
-            local_sim = ensemble_loss(local_features)
+            local_features, local_features_local = ensemble_extractor(local_cropped)
+            local_sim = ensemble_loss(local_features, local_features_local)
             loss = local_sim
             metrics["local_similarity"] = local_sim.item()
         else:
-            # Otherwise use global similarity as loss
             loss = global_sim
+
+        # === Gram Matrix 风格损失（整块包 no_grad，避免图构建）===
+        gram_loss_total = torch.tensor(0.0, device=delta.device)
+        if getattr(cfg.model, 'use_gram_loss', False):
+            gram_weight = getattr(cfg.model, 'gram_loss_weight', 1.0)
+            models_list = ensemble_extractor.extractors if hasattr(ensemble_extractor, 'extractors') else [ensemble_extractor]
+            with torch.no_grad():
+                for idx, model in enumerate(models_list):
+                    _, gram_tgt = model.spatial_gram_features(target_crop(image_tgt))
+                    _, gram_adv = model.spatial_gram_features(adv_image)
+                    g_loss = ensemble_loss.gram_loss(gram_adv.squeeze(0), idx)
+                    gram_loss_total = gram_loss_total + g_loss
+            gram_loss_total = gram_loss_total / len(models_list)
+            loss = loss + gram_weight * gram_loss_total
+            metrics["gram_loss"] = gram_loss_total.item()
 
         log_metrics(pbar, metrics, img_index, epoch)
 
@@ -490,7 +551,7 @@ def pgd_attack(
 
         # Forward pass
         adv_image = image_org + delta
-        adv_features = ensemble_extractor(adv_image)
+        adv_features, adv_features_local = ensemble_extractor(adv_image)
 
         # Calculate metrics
         metrics = {
@@ -498,20 +559,33 @@ def pgd_attack(
             "mean_delta": torch.mean(torch.abs(delta)).item(),
         }
 
-        # Calculate loss based on configuration
-        global_sim = ensemble_loss(adv_features)
+        # Calculate loss (PGD minimizes, so negate to maximize similarity)
+        global_sim = ensemble_loss(adv_features, adv_features_local)
         metrics["global_similarity"] = global_sim.item()
 
         if cfg.model.use_source_crop:
-            # If using source crop, calculate additional local similarity
             local_cropped = source_crop(adv_image)
-            local_features = ensemble_extractor(local_cropped)
-            local_sim = ensemble_loss(local_features)
-            loss = -local_sim # since we want to maximize the loss
+            local_features, local_features_local = ensemble_extractor(local_cropped)
+            local_sim = ensemble_loss(local_features, local_features_local)
+            loss = -local_sim  # maximize similarity
             metrics["local_similarity"] = local_sim.item()
         else:
-            # Otherwise use global similarity as loss
-            loss = -global_sim
+            loss = -global_sim  # maximize similarity
+
+        # === Gram Matrix 风格损失（整块包 no_grad，避免图构建）===
+        gram_loss_total = torch.tensor(0.0, device=delta.device)
+        if getattr(cfg.model, 'use_gram_loss', False):
+            gram_weight = getattr(cfg.model, 'gram_loss_weight', 1.0)
+            models_list = ensemble_extractor.extractors if hasattr(ensemble_extractor, 'extractors') else [ensemble_extractor]
+            with torch.no_grad():
+                for idx, model in enumerate(models_list):
+                    _, gram_tgt = model.spatial_gram_features(target_crop(image_tgt))
+                    _, gram_adv = model.spatial_gram_features(adv_image)
+                    g_loss = ensemble_loss.gram_loss(gram_adv.squeeze(0), idx)
+                    gram_loss_total = gram_loss_total + g_loss
+            gram_loss_total = gram_loss_total / len(models_list)
+            loss = loss + gram_weight * gram_loss_total
+            metrics["gram_loss"] = gram_loss_total.item()
 
         log_metrics(pbar, metrics, img_index, epoch)
 
