@@ -59,6 +59,11 @@ class ModelConfig:
     )  # List of models to use: L336, B16, B32, Laion
     use_gram_loss: bool = False        # 新增：启用 Gram Matrix 风格损失
     gram_loss_weight: float = 1.0      # 新增：Gram loss 权重
+    
+    # Saliency Attack 参数
+    saliency_loss_version: str = "v1"   # 显著性损失版本: v1, v2, v3
+    saliency_ratio: float = 0.3         # 显著性比例：抑制前 X% 高显著区域
+    alpha_schedule: str = "cosine"     # alpha 调度策略: linear, cosine, step
 
 
 @dataclass

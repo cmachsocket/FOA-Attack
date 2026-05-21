@@ -1,7 +1,7 @@
 import torch
 from torch import nn, Tensor
 from abc import abstractmethod
-from typing import List, Any, Callable, Dict
+from typing import List, Any, Callable, Dict, Tuple
 from kmeans_pytorch import kmeans
 import torch.nn.functional as F
 from torchvision import transforms as T
@@ -54,25 +54,21 @@ class EnsembleFeatureExtractor_ot(BaseFeatureExtractor):
         self.cluster_number = cluster_number
 
     def forward(self, x: Tensor) -> Tensor:
-        # features = []
-        # for model in self.extractors:
-        #     features.append(model(x).squeeze())
-        # features = torch.cat(features, dim=0)
-        features = {}  # 不拼接，改为字典存储
+        features = {}
         features_local = {}
+        features_raw = {}  # 原始 patch embeddings（不聚类）
         for i, model in enumerate(self.extractors):
-            # features[i] = model(x).squeeze()
             x_tensor, x_embedding = model.global_local_features(x.to(x.device))
             features[i] = x_tensor.squeeze()
-            cluster_center = self.get_cluster_center(x_embedding[0],x.device).unsqueeze(0)
-            features_local[i]=cluster_center
+            # 聚类中心（用于 OT 风格的损失）
+            cluster_center = self.get_cluster_center(x_embedding[0], x.device).unsqueeze(0)
+            features_local[i] = cluster_center
+            # 原始 patch embeddings（用于 saliency loss）
+            features_raw[i] = x_embedding.squeeze(0)  # [N_patches, D]
 
-        return features,features_local
+        return features, features_local, features_raw
 
     def get_cluster_center(self, embedding_img,device):
-        # self.setup_seed(20)
-        # for i in range(10):
-        # np.random.seed(20)
         with suppress_output():
             cluster_ids_x, cluster_center = kmeans(
                 X=embedding_img,
@@ -81,8 +77,11 @@ class EnsembleFeatureExtractor_ot(BaseFeatureExtractor):
                 device=device
             )
             cluster_center = cluster_center.to(device)
-        # print(cluster_ids_x)
         return cluster_center
+
+    def forward_raw(self, x: Tensor) -> Tuple[Dict, Dict, Dict]:
+        """返回包含原始 patch embeddings 的版本"""
+        return self.forward(x)
     
 class EnsembleFeatureExtractor_ot3(BaseFeatureExtractor):
     def __init__(self, extractors: List[BaseFeatureExtractor]):

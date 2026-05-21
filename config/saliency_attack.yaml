@@ -1,0 +1,72 @@
+# Saliency Attack Configuration
+# 显著性抑制重建攻击配置文件
+
+model:
+  # 骨干网络选择：L336, B16, B32, Laion
+  backbone:
+    - B16
+    - B32
+    - Laion
+  
+  # 是否使用集成（建议开启）
+  ensemble: true
+  
+  # 设备
+  device: cuda
+  
+  # 输入分辨率
+  input_res: 224
+  
+  # 是否使用随机裁剪（建议开启）
+  use_source_crop: true
+  use_target_crop: true
+  
+  # 裁剪 scale
+  crop_scale: [0.8, 1.0]
+  
+  # ========== Saliency Attack 专用参数 ==========
+  
+  # 显著性损失版本: v1 (基础), v2 (注意力), v3 (多层)
+  saliency_loss_version: v1
+  
+  # 显著性比例：抑制前 X% 高显著区域
+  saliency_ratio: 0.3
+
+
+data:
+  # 源图像路径（干净图像）
+  cle_data_path: /path/to/clean/images
+  
+  # 目标图像路径
+  tgt_data_path: /path/to/target/images
+  
+  # 输出路径
+  output: ./outputs
+  
+  # batch size（建议 1）
+  batch_size: 1
+  
+  # 总样本数（设为 -1 处理全部）
+  num_samples: 1000
+
+
+attack:
+  # 攻击类型: fgsm, mifgsm, pgd
+  type: mifgsm
+
+
+optim:
+  # 扰动上界（像素值 0-255）
+  epsilon: 16
+  
+  # 步长
+  alpha: 1.0
+  
+  # 迭代步数
+  steps: 300
+
+
+wandb:
+  enabled: true
+  project: foa-saliency-attack
+  entity: null

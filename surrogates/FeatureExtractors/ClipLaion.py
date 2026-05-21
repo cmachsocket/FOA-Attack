@@ -16,7 +16,7 @@ def gram_matrix(features):
 class ClipLaionFeatureExtractor(BaseFeatureExtractor):
     def __init__(self):
         super(ClipLaionFeatureExtractor, self).__init__()
-        self.model = CLIPModel.from_pretrained("laion/CLIP-ViT-g-14-laion2B-s34b-b79k").cuda()
+        self.model = CLIPModel.from_pretrained("laion/CLIP-ViT-G-14-laion2B-s12B-b42K")
         self.normalizer = transforms.Compose(
         [
             transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
@@ -49,7 +49,8 @@ class ClipLaionFeatureExtractor(BaseFeatureExtractor):
         features = outputs.last_hidden_state          # [B, 257, 1408] (1 CLS + 256 patches)
         patch_features = features[:, 1:, :]          # [B, 256, 1408]
         B, N, D = patch_features.shape                 # B=1, N=256, D=1408
-        H = W = int(N ** 0.5)                          # 16
+        # Gram features: 256 patches -> 16x16 spatial
+        H = W = 16
         spatial = patch_features.transpose(1, 2).view(B, D, H, W)  # [B, D, 16, 16]
         gram = gram_matrix(spatial)
         return spatial, gram
@@ -58,7 +59,7 @@ class ClipLaionFeatureExtractor(BaseFeatureExtractor):
 class ClipLaionFeatureExtractorOT(BaseFeatureExtractor):
     def __init__(self):
         super(ClipLaionFeatureExtractorOT, self).__init__()
-        self.model = CLIPModel.from_pretrained("laion/CLIP-ViT-g-14-laion2B-s34b-b79k").cuda()
+        self.model = CLIPModel.from_pretrained("laion/CLIP-ViT-L-14-336").cuda()
         self.normalizer = transforms.Compose(
             [
                 transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
