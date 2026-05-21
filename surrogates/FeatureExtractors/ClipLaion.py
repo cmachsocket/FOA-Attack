@@ -16,7 +16,7 @@ def gram_matrix(features):
 class ClipLaionFeatureExtractor(BaseFeatureExtractor):
     def __init__(self):
         super(ClipLaionFeatureExtractor, self).__init__()
-        self.model = CLIPModel.from_pretrained("/home/cmach_socket/.cache/huggingface/hub/models--laion--CLIP-ViT-G-14-laion2B-s12B-b42K/snapshots/4b0305adc6802b2632e11cbe6606a9bdd43d35c9").cuda()
+        self.model = CLIPModel.from_pretrained("laion/CLIP-ViT-g-14-laion2B-s34b-b79k").cuda()
         self.normalizer = transforms.Compose(
         [
             transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
@@ -58,7 +58,7 @@ class ClipLaionFeatureExtractor(BaseFeatureExtractor):
 class ClipLaionFeatureExtractorOT(BaseFeatureExtractor):
     def __init__(self):
         super(ClipLaionFeatureExtractorOT, self).__init__()
-        self.model = CLIPModel.from_pretrained("/home/cmach_socket/.cache/huggingface/hub/models--laion--CLIP-ViT-G-14-laion2B-s12B-b42K/snapshots/4b0305adc6802b2632e11cbe6606a9bdd43d35c9").cuda()
+        self.model = CLIPModel.from_pretrained("laion/CLIP-ViT-g-14-laion2B-s34b-b79k").cuda()
         self.normalizer = transforms.Compose(
             [
                 transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),

@@ -16,8 +16,8 @@ def gram_matrix(features):
 class ClipB32FeatureExtractor(BaseFeatureExtractor):
     def __init__(self):
         super(ClipB32FeatureExtractor, self).__init__()
-        self.model = CLIPModel.from_pretrained("/home/cmach_socket/.cache/huggingface/hub/models--openai--clip-vit-base-patch32/snapshots/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268").cuda()
-        self.processor = CLIPProcessor.from_pretrained("/home/cmach_socket/.cache/huggingface/hub/models--openai--clip-vit-base-patch32/snapshots/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268")
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").cuda()
+        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         self.normalizer = transforms.Compose(
         [
             transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
@@ -59,8 +59,8 @@ class ClipB32FeatureExtractor(BaseFeatureExtractor):
 class ClipB32FeatureExtractorOT(BaseFeatureExtractor):
     def __init__(self):
         super(ClipB32FeatureExtractorOT, self).__init__()
-        self.model = CLIPModel.from_pretrained("/home/cmach_socket/.cache/huggingface/hub/models--openai--clip-vit-base-patch32/snapshots/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268").cuda()
-        self.processor = CLIPProcessor.from_pretrained("/home/cmach_socket/.cache/huggingface/hub/models--openai--clip-vit-base-patch32/snapshots/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268")
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").cuda()
+        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         self.normalizer = transforms.Compose(
             [
                 transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
