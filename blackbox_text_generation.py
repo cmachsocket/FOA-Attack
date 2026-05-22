@@ -8,7 +8,6 @@ import torch
 import torchvision
 from omegaconf import OmegaConf
 from tqdm import tqdm
-from transformers import LlavaNextProcessor
 import wandb
 from tenacity import (
     retry,
@@ -62,10 +61,7 @@ def setup_llava():
         gpu_memory_utilization=0.85,
         enable_prefix_caching=True,
     )
-    # Build chat template from processor
-    processor = LlavaNextProcessor.from_pretrained(LLAVA_MODEL_PATH)
-    chat_template = processor.tokenizer.chat_template or processor.tokenizer.get_chat_template()
-    return llm, chat_template
+    return llm
 
 
 def get_media_type(image_path: str) -> str:
@@ -93,7 +89,7 @@ class ImageDescriptionGenerator:
             api_key = get_api_key(model_name)
             self.client = setup_gpt4o(api_key)
         elif model_name == "llava":
-            self.llm, self.chat_template = setup_llava()
+            self.llm = setup_llava()
         else:
             raise ValueError(f"Unsupported model: {model_name}")
 
@@ -174,23 +170,13 @@ class ImageDescriptionGenerator:
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
     def _generate_llava(self, image_path: str) -> str:
         from vllm import SamplingParams
-        processor = LlavaNextProcessor.from_pretrained(LLAVA_MODEL_PATH)
-        conversation = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe this image in one concise sentence, no longer than 20 words."},
-                    {"type": "image"},
-                ],
-            },
-        ]
-        prompt = processor.tokenizer.apply_chat_template(
-            conversation, add_generation_prompt=True, tokenize=False
-        )
+        from PIL import Image
+        # vLLM LLaVA uses a special prompt format with <image> placeholder
+        prompt = "Describe this image in one concise sentence, no longer than 20 words.<|image_pad>"
         image = Image.open(image_path).convert("RGB")
         sampling_params = SamplingParams(max_tokens=100, temperature=0)
         outputs = self.llm.generate(
-            {"promptrompt": prompt, "multi_modal_data": {"image": image}},
+            {"prompt": prompt, "multi_modal_data": {"image": image}},
             sampling_params=sampling_params,
         )
         return outputs[0].outputs[0].text.strip()
