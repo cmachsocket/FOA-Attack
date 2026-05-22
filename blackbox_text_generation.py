@@ -19,7 +19,6 @@ from google import genai
 import openai
 from openai import OpenAI
 import anthropic
-import vllm
 
 from utils import (
     get_api_key,
@@ -36,6 +35,9 @@ VALID_IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".JPEG"]
 # Local LLaVA model path
 LLAVA_MODEL_PATH = "/home/gpuadmin/models--llava-hf--llava-v1.6-vicuna-7b-hf/snapshots/c916e6cdcd760b4cecd1dd4907f84ac649f93b23"
 
+# vLLM Server URL
+VLLM_BASE_URL = "http://localhost:8000"
+
 
 def setup_gemini(api_key: str):
     return genai.Client(api_key=api_key)
@@ -47,21 +49,8 @@ def setup_claude(api_key: str):
 
 def setup_gpt4o(api_key: str):
     return OpenAI(
-        api_key=api_key,
+        api_key=***
     )
-
-
-def setup_llava():
-    """Load LLaVA model with vLLM Engine on GPU."""
-    llm = vllm.LLM(
-        model=LLAVA_MODEL_PATH,
-        trust_remote_code=True,
-        max_model_len=1024,
-        dtype="half",
-        gpu_memory_utilization=0.85,
-        enable_prefix_caching=True,
-    )
-    return llm
 
 
 def get_media_type(image_path: str) -> str:
@@ -89,7 +78,8 @@ class ImageDescriptionGenerator:
             api_key = get_api_key(model_name)
             self.client = setup_gpt4o(api_key)
         elif model_name == "llava":
-            self.llm = setup_llava()
+            self.client = OpenAI(base_url=f"{VLLM_BASE_URL}/v1", api_key="none")
+            self.model_name_llava = LLAVA_MODEL_PATH
         else:
             raise ValueError(f"Unsupported model: {model_name}")
 
@@ -169,17 +159,29 @@ class ImageDescriptionGenerator:
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
     def _generate_llava(self, image_path: str) -> str:
-        from vllm import SamplingParams
-        from PIL import Image
-        # vLLM LLaVA uses a special prompt format with <image> placeholder
-        prompt = "Describe this image in one concise sentence, no longer than 20 words.<|image_pad>"
-        image = Image.open(image_path).convert("RGB")
-        sampling_params = SamplingParams(max_tokens=100, temperature=0)
-        outputs = self.llm.generate(
-            {"prompt": prompt, "multi_modal_data": {"image": image}},
-            sampling_params=sampling_params,
+        base64_image = encode_image(image_path)
+        response = self.client.chat.completions.create(
+            model=self.model_name_llava,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Describe this image in one concise sentence, no longer than 20 words.",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            max_tokens=100,
         )
-        return outputs[0].outputs[0].text.strip()
+        return response.choices[0].message.content.strip()
 
 
 def save_descriptions(descriptions: List[Tuple[str, str]], output_file: str):
