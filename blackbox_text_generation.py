@@ -64,7 +64,7 @@ def setup_llava():
     )
     # Build chat template from processor
     processor = LlavaNextProcessor.from_pretrained(LLAVA_MODEL_PATH)
-    chat_template = processor.tokenizer.chat_template or processor.tokenizer.default_chat_template
+    chat_template = processor.tokenizer.chat_template or processor.tokenizer.get_chat_template()
     return llm, chat_template
 
 
