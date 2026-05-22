@@ -18,6 +18,7 @@ from google import genai
 import openai
 from openai import OpenAI
 import anthropic
+from transformers import AutoProcessor, AutoModelForVision2Seq
 
 from utils import (
     get_api_key,
@@ -30,6 +31,9 @@ from utils import (
 
 # Define valid image extensions
 VALID_IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".JPEG"]
+
+# Local LLaVA model path
+LLAVA_MODEL_PATH = "/models--llava-hf--llava-v1.6-vicuna-7b-hf/snapshots/c916e6cdcd760b4cecd1dd4907f84ac649f93b23"
 
 
 def setup_gemini(api_key: str):
@@ -46,6 +50,17 @@ def setup_gpt4o(api_key: str):
     )
 
 
+def setup_llava():
+    """Load LLaVA model with fp16 quantization on GPU."""
+    processor = AutoProcessor.from_pretrained(LLAVA_MODEL_PATH)
+    model = AutoModelForVision2Seq.from_pretrained(
+        LLAVA_MODEL_PATH,
+        device_map="cuda",
+        torch_dtype=torch.float16,
+    )
+    return processor, model
+
+
 def get_media_type(image_path: str) -> str:
     """Get the correct media type based on file extension."""
     ext = os.path.splitext(image_path)[1].lower()
@@ -60,15 +75,18 @@ def get_media_type(image_path: str) -> str:
 class ImageDescriptionGenerator:
     def __init__(self, model_name: str):
         self.model_name = model_name
-        # Get API key for the model
-        api_key = get_api_key(model_name)
 
         if model_name == "gemini":
+            api_key = get_api_key(model_name)
             self.client = setup_gemini(api_key)
         elif model_name == "claude":
+            api_key = get_api_key(model_name)
             self.client = setup_claude(api_key)
         elif model_name == "gpt4o":
+            api_key = get_api_key(model_name)
             self.client = setup_gpt4o(api_key)
+        elif model_name == "llava":
+            self.processor, self.client = setup_llava()
         else:
             raise ValueError(f"Unsupported model: {model_name}")
 
@@ -79,6 +97,8 @@ class ImageDescriptionGenerator:
             return self._generate_claude(image_path)
         elif self.model_name == "gpt4o":
             return self._generate_gpt4o(image_path)
+        elif self.model_name == "llava":
+            return self._generate_llava(image_path)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
     def _generate_gemini(self, image_path: str) -> str:
@@ -143,6 +163,18 @@ class ImageDescriptionGenerator:
             max_tokens=100,
         )
         return response.choices[0].message.content
+
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+    def _generate_llava(self, image_path: str) -> str:
+        image = Image.open(image_path).convert("RGB")
+        prompt = "Describe this image in one concise sentence, no longer than 20 words."
+        inputs = self.processor(text=prompt, images=image, return_tensors="pt").to("cuda")
+        output = self.client.generate(
+            **inputs,
+            max_new_tokens=100,
+            do_sample=False,
+        )
+        return self.processor.decode(output[0], skip_special_tokens=True).strip()
 
 
 def save_descriptions(descriptions: List[Tuple[str, str]], output_file: str):
