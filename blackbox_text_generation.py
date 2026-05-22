@@ -1,5 +1,6 @@
 import os
-import requests
+import base64
+import json
 from PIL import Image
 from typing import Dict, Any, List, Tuple
 import hydra
@@ -7,6 +8,7 @@ import torch
 import torchvision
 from omegaconf import OmegaConf
 from tqdm import tqdm
+from transformers import LlavaNextProcessor
 import wandb
 from tenacity import (
     retry,
@@ -18,10 +20,7 @@ from google import genai
 import openai
 from openai import OpenAI
 import anthropic
-import json
-from modelscope import LlavaNextImageProcessor,LlavaNextProcessor, LlavaNextForConditionalGeneration
-
-from transformers import LlamaTokenizerFast
+import vllm
 
 from utils import (
     get_api_key,
@@ -49,33 +48,24 @@ def setup_claude(api_key: str):
 
 def setup_gpt4o(api_key: str):
     return OpenAI(
-        api_key="api_key",
+        api_key=api_key,
     )
 
 
 def setup_llava():
-    """Load LLaVA model with fp16 on GPU."""
-    with open(LLAVA_MODEL_PATH + "/preprocessor_config.json") as f:
-        preprocessor_config = json.load(f)
-
-    image_processor = LlavaNextImageProcessor(**{
-        k: v for k, v in preprocessor_config.items()
-        if k not in ["processor_class", "image_processor_type"]
-    })
-
-    tokenizer = LlamaTokenizerFast.from_pretrained(LLAVA_MODEL_PATH)
-    processor = LlavaNextProcessor(
-        image_processor=image_processor,
-        tokenizer=tokenizer,
+    """Load LLaVA model with vLLM Engine on GPU."""
+    llm = vllm.LLM(
+        model=LLAVA_MODEL_PATH,
+        trust_remote_code=True,
+        max_model_len=1024,
+        dtype="half",
+        gpu_memory_utilization=0.85,
+        enable_prefix_caching=True,
     )
-
-    model = LlavaNextForConditionalGeneration.from_pretrained(
-        LLAVA_MODEL_PATH,
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True,
-    )
-    model.to("cuda:0")
-    return processor, model
+    # Build chat template from processor
+    processor = LlavaNextProcessor.from_pretrained(LLAVA_MODEL_PATH)
+    chat_template = processor.tokenizer.chat_template or processor.tokenizer.default_chat_template
+    return llm, chat_template
 
 
 def get_media_type(image_path: str) -> str:
@@ -103,7 +93,7 @@ class ImageDescriptionGenerator:
             api_key = get_api_key(model_name)
             self.client = setup_gpt4o(api_key)
         elif model_name == "llava":
-            self.processor, self.client = setup_llava()
+            self.llm, self.chat_template = setup_llava()
         else:
             raise ValueError(f"Unsupported model: {model_name}")
 
@@ -183,7 +173,8 @@ class ImageDescriptionGenerator:
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
     def _generate_llava(self, image_path: str) -> str:
-        image = Image.open(image_path).convert("RGB")
+        from vllm import SamplingParams
+        processor = LlavaNextProcessor.from_pretrained(LLAVA_MODEL_PATH)
         conversation = [
             {
                 "role": "user",
@@ -193,14 +184,16 @@ class ImageDescriptionGenerator:
                 ],
             },
         ]
-        prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
-        inputs = self.processor(images=image, text=prompt, return_tensors="pt").to("cuda:0")
-        output = self.client.generate(
-            **inputs,
-            max_new_tokens=100,
-            do_sample=False,
+        prompt = processor.tokenizer.apply_chat_template(
+            conversation, add_generation_prompt=True, tokenize=False
         )
-        return self.processor.decode(output[0], skip_special_tokens=True).strip()
+        image = Image.open(image_path).convert("RGB")
+        sampling_params = SamplingParams(max_tokens=100, temperature=0)
+        outputs = self.llm.generate(
+            {"promptrompt": prompt, "multi_modal_data": {"image": image}},
+            sampling_params=sampling_params,
+        )
+        return outputs[0].outputs[0].text.strip()
 
 
 def save_descriptions(descriptions: List[Tuple[str, str]], output_file: str):
