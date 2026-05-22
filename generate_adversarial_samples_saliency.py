@@ -197,10 +197,10 @@ def main(cfg: MainConfig):
     target_data = ImageFolderWithPaths(cfg.data.tgt_data_path, transform=transform_fn)
 
     data_loader_imagenet = torch.utils.data.DataLoader(
-        clean_data, batch_size=cfg.data.batch_size, shuffle=False
+        clean_data, batch_size=cfg.data.batch_size, shuffle=False, num_workers=4
     )
     data_loader_target = torch.utils.data.DataLoader(
-        target_data, batch_size=cfg.data.batch_size, shuffle=False
+        target_data, batch_size=cfg.data.batch_size, shuffle=False,num_workers=4
     )
 
     print("Using source crop:", cfg.model.use_source_crop)

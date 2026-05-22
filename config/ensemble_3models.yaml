@@ -8,7 +8,7 @@ data:
   num_samples: 100
   output: "./foa_attack_output"
   cle_data_path: "resources/images/bigscale"
-  tgt_data_path: "resources/images/horse_riding_validation"
+  tgt_data_path: "resources/images/target_images"
 
 optim:
   alpha: 1.0
