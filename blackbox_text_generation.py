@@ -18,7 +18,8 @@ from google import genai
 import openai
 from openai import OpenAI
 import anthropic
-from transformers import AutoProcessor, AutoModelForVision2Seq
+from transformers.models.llavaNext.processing_llavaNext import LlavaNextProcessor
+from transformers.models.llavaNext.modeling_llavaNext_flax import LlavaNextForConditionalGeneration
 
 from utils import (
     get_api_key,
@@ -33,7 +34,7 @@ from utils import (
 VALID_IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".JPEG"]
 
 # Local LLaVA model path
-LLAVA_MODEL_PATH = "/models--llava-hf--llava-v1.6-vicuna-7b-hf/snapshots/c916e6cdcd760b4cecd1dd4907f84ac649f93b23"
+LLAVA_MODEL_PATH = "/home/gpuadmin/models--llava-hf--llava-v1.6-vicuna-7b-hf/snapshots/c916e6cdcd760b4cecd1dd4907f84ac649f93b23"
 
 
 def setup_gemini(api_key: str):
@@ -51,13 +52,14 @@ def setup_gpt4o(api_key: str):
 
 
 def setup_llava():
-    """Load LLaVA model with fp16 quantization on GPU."""
-    processor = AutoProcessor.from_pretrained(LLAVA_MODEL_PATH)
-    model = AutoModelForVision2Seq.from_pretrained(
+    """Load LLaVA model with fp16 on GPU."""
+    processor = LlavaNextProcessor.from_pretrained(LLAVA_MODEL_PATH)
+    model = LlavaNextForConditionalGeneration.from_pretrained(
         LLAVA_MODEL_PATH,
-        device_map="cuda",
         torch_dtype=torch.float16,
+        low_cpu_mem_usage=True,
     )
+    model.to("cuda:0")
     return processor, model
 
 
@@ -167,8 +169,17 @@ class ImageDescriptionGenerator:
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
     def _generate_llava(self, image_path: str) -> str:
         image = Image.open(image_path).convert("RGB")
-        prompt = "Describe this image in one concise sentence, no longer than 20 words."
-        inputs = self.processor(text=prompt, images=image, return_tensors="pt").to("cuda")
+        conversation = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image in one concise sentence, no longer than 20 words."},
+                    {"type": "image"},
+                ],
+            },
+        ]
+        prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
+        inputs = self.processor(images=image, text=prompt, return_tensors="pt").to("cuda:0")
         output = self.client.generate(
             **inputs,
             max_new_tokens=100,
