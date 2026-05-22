@@ -223,6 +223,15 @@ def main(cfg: MainConfig):
         if cfg.data.batch_size * (i + 1) > cfg.data.num_samples:
             break
 
+        # 跳过已生成的样本
+        config_hash = hash_training_config(cfg)
+        first_name = path_org[0].split('/')[-1]
+        save_name = first_name[:-4] + "png" if "JPEG" in first_name else first_name
+        folder_check = os.path.join(cfg.data.output, "img", config_hash, path_org[0].split('/')[-2])
+        if os.path.exists(os.path.join(folder_check, save_name)):
+            print(f"  ⏭ skip {save_name}, already exists")
+            continue
+
         print(f"\nProcessing image {i+1}/{cfg.data.num_samples//cfg.data.batch_size} | target: {path_tgt[0].split('/')[-2]}/{path_tgt[0].split('/')[-1]}")
 
         attack_imgpair(

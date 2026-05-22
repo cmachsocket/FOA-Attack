@@ -70,3 +70,5 @@ wandb:
   enabled: true
   project: foa-saliency-attack
   entity: null
+
+# it isn't actually used, just for record

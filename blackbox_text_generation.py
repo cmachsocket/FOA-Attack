@@ -49,7 +49,7 @@ def setup_claude(api_key: str):
 
 def setup_gpt4o(api_key: str):
     return OpenAI(
-        api_key=***
+        api_key="***"
     )
 
 
