@@ -18,8 +18,10 @@ from google import genai
 import openai
 from openai import OpenAI
 import anthropic
-from transformers.models.llavaNext.processing_llavaNext import LlavaNextProcessor
-from transformers.models.llavaNext.modeling_llavaNext_flax import LlavaNextForConditionalGeneration
+import json
+from modelscope import LlavaNextImageProcessor,LlavaNextProcessor, LlavaNextForConditionalGeneration
+
+from transformers import LlamaTokenizerFast
 
 from utils import (
     get_api_key,
@@ -53,7 +55,20 @@ def setup_gpt4o(api_key: str):
 
 def setup_llava():
     """Load LLaVA model with fp16 on GPU."""
-    processor = LlavaNextProcessor.from_pretrained(LLAVA_MODEL_PATH)
+    with open(LLAVA_MODEL_PATH + "/preprocessor_config.json") as f:
+        preprocessor_config = json.load(f)
+
+    image_processor = LlavaNextImageProcessor(**{
+        k: v for k, v in preprocessor_config.items()
+        if k not in ["processor_class", "image_processor_type"]
+    })
+
+    tokenizer = LlamaTokenizerFast.from_pretrained(LLAVA_MODEL_PATH)
+    processor = LlavaNextProcessor(
+        image_processor=image_processor,
+        tokenizer=tokenizer,
+    )
+
     model = LlavaNextForConditionalGeneration.from_pretrained(
         LLAVA_MODEL_PATH,
         torch_dtype=torch.float16,
