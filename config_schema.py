@@ -16,7 +16,7 @@ class WandbConfig:
 class BlackboxConfig:
     """Configuration for blackbox model evaluation"""
 
-    model_name: str = "gpt4v"  # Can be gpt4v, claude, gemini, gpt_score
+    model_name: str = "gpt4v"  # Used as output file prefix AND vLLM model identifier (e.g. gpt4v, claude, gemini, deepseek-chat, qwen2.5-7b)
     batch_size: int = 1
     timeout: int = 30
 

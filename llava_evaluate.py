@@ -20,15 +20,15 @@ from utils import hash_training_config
 # vLLM Server URL
 VLLM_BASE_URL = "http://localhost:8000"
 
-# Local LLaVA model path (used as model identifier for vLLM)
-LLAVA_MODEL_PATH = "/home/gpuadmin/models--llava-hf--llava-v1.6-vicuna-7b-hf/snapshots/c916e6cdcd760b4cecd1dd4907f84ac649f93b23"
+# Default model (used when config doesn't specify)
+DEFAULT_VLLM_MODEL = "llava-hf/llava-v1.6-vicuna-7b-hf"
 
 
 class LLavaScorer:
     def __init__(self, base_url: str = VLLM_BASE_URL, model: str = None):
         self.base_url = base_url
-        self.model = model or LLAVA_MODEL_PATH
-        self.client = OpenAI(base_url=f"{self.base_url}/v1", api_key="***")
+        self.model = model or DEFAULT_VLLM_MODEL
+        self.client = OpenAI(base_url=f"{self.base_url}/v1", api_key="fake")
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
     def compute_similarity(self, text1: str, text2: str) -> float:
@@ -96,8 +96,8 @@ def main(cfg: MainConfig):
         tags=["llava_evaluation"],
     )
 
-    # Initialize LLaVA scorer
-    scorer = LLavaScorer()
+    # Initialize scorer (supports any vLLM model)
+    scorer = LLavaScorer(model=cfg.blackbox.model_name)
 
     # Get config hash and setup paths
     config_hash = hash_training_config(cfg)

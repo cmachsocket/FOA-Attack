@@ -32,9 +32,6 @@ from utils import (
 # Define valid image extensions
 VALID_IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".JPEG"]
 
-# Local LLaVA model path
-LLAVA_MODEL_PATH = "/home/gpuadmin/models--llava-hf--llava-v1.6-vicuna-7b-hf/snapshots/c916e6cdcd760b4cecd1dd4907f84ac649f93b23"
-
 # vLLM Server URL
 VLLM_BASE_URL = "http://localhost:8000"
 
@@ -77,11 +74,9 @@ class ImageDescriptionGenerator:
         elif model_name == "gpt4o":
             api_key = get_api_key(model_name)
             self.client = setup_gpt4o(api_key)
-        elif model_name == "llava":
-            self.client = OpenAI(base_url=f"{VLLM_BASE_URL}/v1", api_key="none")
-            self.model_name_llava = LLAVA_MODEL_PATH
         else:
-            raise ValueError(f"Unsupported model: {model_name}")
+            # Any other model name → treat as vLLM endpoint, model_name is the vLLM model identifier
+            self.client = OpenAI(base_url=f"{VLLM_BASE_URL}/v1", api_key="none")
 
     def generate_description(self, image_path: str) -> str:
         if self.model_name == "gemini":
@@ -90,8 +85,9 @@ class ImageDescriptionGenerator:
             return self._generate_claude(image_path)
         elif self.model_name == "gpt4o":
             return self._generate_gpt4o(image_path)
-        elif self.model_name == "llava":
-            return self._generate_llava(image_path)
+        else:
+            # Any other model → vLLM
+            return self._generate_vllm(image_path)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
     def _generate_gemini(self, image_path: str) -> str:
@@ -158,10 +154,10 @@ class ImageDescriptionGenerator:
         return response.choices[0].message.content
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-    def _generate_llava(self, image_path: str) -> str:
+    def _generate_vllm(self, image_path: str) -> str:
         base64_image = encode_image(image_path)
         response = self.client.chat.completions.create(
-            model=self.model_name_llava,
+            model=self.model_name,
             messages=[
                 {
                     "role": "user",

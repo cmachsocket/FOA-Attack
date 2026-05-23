@@ -348,9 +348,14 @@ def fgsm_attack(
         if cfg.model.use_source_crop:
             local_cropped = source_crop(adv_image)
             local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-            local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
-            loss = local_sim
-            metrics["local_similarity"] = local_sim.item()
+            # ── 检查特征是否有效，避免 kmeans 空 cluster 崩溃 ──
+            if local_features_raw.abs().sum() > 0:
+                local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+                loss = local_sim
+                metrics["local_similarity"] = local_sim.item()
+            else:
+                loss = global_sim
+                metrics["local_similarity"] = float("nan")
         else:
             loss = global_sim
 
@@ -366,7 +371,7 @@ def fgsm_attack(
 
     adv_image = image_org + delta
     adv_image = torch.clamp(adv_image / 255.0, 0.0, 1.0)
-
+    
     return adv_image
 
 
@@ -404,9 +409,14 @@ def mifgsm_attack(
         if cfg.model.use_source_crop:
             local_cropped = source_crop(adv_image)
             local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-            local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
-            loss = local_sim
-            metrics["local_similarity"] = local_sim.item()
+            # ── 检查特征是否有效，避免 kmeans 空 cluster 崩溃 ──
+            if local_features_raw.abs().sum() > 0:
+                local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+                loss = local_sim
+                metrics["local_similarity"] = local_sim.item()
+            else:
+                loss = global_sim
+                metrics["local_similarity"] = float("nan")
         else:
             loss = global_sim
 
@@ -414,6 +424,7 @@ def mifgsm_attack(
 
         grad = torch.autograd.grad(loss, delta, create_graph=False)[0]
         momentum = 0.9 * momentum + grad / torch.norm(grad, p=1)
+
 
         delta.data = torch.clamp(
             delta + cfg.optim.alpha * torch.sign(momentum),
@@ -460,9 +471,14 @@ def pgd_attack(
         if cfg.model.use_source_crop:
             local_cropped = source_crop(adv_image)
             local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-            local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
-            loss = local_sim
-            metrics["local_similarity"] = local_sim.item()
+            # ── 检查特征是否有效，避免 kmeans 空 cluster 崩溃 ──
+            if local_features_raw.abs().sum() > 0:
+                local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+                loss = local_sim
+                metrics["local_similarity"] = local_sim.item()
+            else:
+                loss = global_sim
+                metrics["local_similarity"] = float("nan")
         else:
             loss = global_sim
 
