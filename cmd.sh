@@ -4,3 +4,4 @@ uv run generate_adversarial_samples_foa_attack.py --config-name ensemble_3models
 uv run generate_adversarial_samples_foa_attack.py --config-name ensemble_3models 
 uv run python llava_evaluate.py -m blackbox.model_name=llava
 CUDA_VISIBLE_DEVICES
+CUDA_VISIBLE_DEVICES=3 uv run vllm serve /home/gpuadmin/Qwen3.5-9B --served-model-name Qwen3.5-9B

@@ -162,7 +162,7 @@ class ImageFolderWithPaths(torchvision.datasets.ImageFolder):
         return original_tuple + (path,)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="ensemble_3models")
+@hydra.main(version_base=None, config_path="config", config_name="saliency_attack")
 def main(cfg: MainConfig):
     set_environment()
 
