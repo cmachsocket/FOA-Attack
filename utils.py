@@ -91,8 +91,13 @@ def hash_training_config(cfg: MainConfig) -> str:
             "crop_scale": tuple(float(x) for x in cfg.model.crop_scale),
             "ensemble": bool(cfg.model.ensemble),
             "backbone": backbone,
+            "saliency_loss_version": str(cfg.model.get("saliency_loss_version", "v1")),
+            "saliency_ratio": float(cfg.model.get("saliency_ratio", 0.3)),
+            "alpha_schedule": str(cfg.model.get("alpha_schedule", "cosine")),
+            "base_alpha": float(cfg.model.get("base_alpha", 0.5)),
+            "sigmoid_scale": float(cfg.model.get("sigmoid_scale", 6.0)),
         },
-        "attack": cfg.attack,
+        "attack": str(cfg.attack),
     }
     
     # Convert to JSON string with sorted keys

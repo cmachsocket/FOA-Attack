@@ -42,7 +42,7 @@ class EnsembleFeatureExtractor(BaseFeatureExtractor):
         # for model in self.extractors:
         #     features.append(model(x).squeeze())
         # features = torch.cat(features, dim=0)
-        features = {}  # 不拼接，改为字典存储
+        features = {}  # 不拼接,改为字典存储
         for i, model in enumerate(self.extractors):
             features[i] = model(x).squeeze()
         return features
@@ -56,14 +56,14 @@ class EnsembleFeatureExtractor_ot(BaseFeatureExtractor):
     def forward(self, x: Tensor) -> Tensor:
         features = {}
         features_local = {}
-        features_raw = {}  # 原始 patch embeddings（不聚类）
+        features_raw = {}  # 原始 patch embeddings(不聚类)
         for i, model in enumerate(self.extractors):
             x_tensor, x_embedding = model.global_local_features(x.to(x.device))
             features[i] = x_tensor.squeeze()
-            # 聚类中心（用于 OT 风格的损失）
+            # 聚类中心(用于 OT 风格的损失)
             cluster_center = self.get_cluster_center(x_embedding[0], x.device).unsqueeze(0)
             features_local[i] = cluster_center
-            # 原始 patch embeddings（用于 saliency loss）
+            # 原始 patch embeddings(用于 saliency loss)
             features_raw[i] = x_embedding.squeeze(0)  # [N_patches, D]
 
         return features, features_local, features_raw
@@ -82,7 +82,22 @@ class EnsembleFeatureExtractor_ot(BaseFeatureExtractor):
     def forward_raw(self, x: Tensor) -> Tuple[Dict, Dict, Dict]:
         """返回包含原始 patch embeddings 的版本"""
         return self.forward(x)
-    
+
+    def intermediate_forward(self, x: Tensor) -> Tuple[Dict[int, List[Tensor]], Dict[int, List[Tensor]]]:
+        """Return intermediate layer features for all models.
+
+        Returns:
+            all_global: dict {model_idx: list of [B, D] CLS tokens per layer}
+            all_local:  dict {model_idx: list of [B, N, D] patch tokens per layer}
+        """
+        all_global = {}
+        all_local = {}
+        for i, model in enumerate(self.extractors):
+            _, all_global_i, all_local_i = model.intermediate_features(x.to(x.device))
+            all_global[i] = all_global_i
+            all_local[i] = all_local_i
+        return all_global, all_local
+
 class EnsembleFeatureExtractor_ot3(BaseFeatureExtractor):
     def __init__(self, extractors: List[BaseFeatureExtractor]):
         super(EnsembleFeatureExtractor_ot3, self).__init__()
@@ -93,7 +108,7 @@ class EnsembleFeatureExtractor_ot3(BaseFeatureExtractor):
         # for model in self.extractors:
         #     features.append(model(x).squeeze())
         # features = torch.cat(features, dim=0)
-        features = {}  # 不拼接，改为字典存储
+        features = {}  # 不拼接,改为字典存储
         features_local = {}
         for i, model in enumerate(self.extractors):
             # features[i] = model(x).squeeze()
@@ -138,7 +153,7 @@ class EnsembleFeatureLoss(nn.Module):
             gt = self.ground_truth[index]
             feature = feature_dict[index]
             loss += torch.mean(torch.sum(feature * gt, dim=1))
-            
+
         loss = loss / len(self.extractors)
 
         return loss
@@ -278,7 +293,7 @@ class EnsembleFeatureLoss_OT_Auto(nn.Module):
             loss_list[i] + 0.1 * loss_local_list[i]
             for i in range(len(self.extractors))
         ]
-        # 初始化 previous_loss_list（首次）
+        # 初始化 previous_loss_list(首次)
         if len(self.previous_loss_list) == 0:
             self.previous_loss_list = [l.detach() for l in total_losses]
 
@@ -292,10 +307,10 @@ class EnsembleFeatureLoss_OT_Auto(nn.Module):
         weights_np = np.array(weights)
         weights_softmax = np.exp(weights_np / T)
         weights_softmax /= np.sum(weights_softmax)
-        weights_softmax *= K  # 可选：缩放为 K
+        weights_softmax *= K  # 可选:缩放为 K
 
 
-        # 初始化 previous_loss_list（首次）
+        # 初始化 previous_loss_list(首次)
         for i in range(len(self.extractors)):
             self.previous_loss_list[i] = total_losses[i].detach()
 
@@ -350,7 +365,7 @@ class EnsembleFeatureLoss_OT_Auto(nn.Module):
                 break
         T = torch.outer(r, c) * K
         return T
-    
+
 class EnsembleFeatureLoss_OT_foa_attack(nn.Module):
     def __init__(self, extractors: List[BaseFeatureExtractor],cluster_number=5):
         super(EnsembleFeatureLoss_OT_foa_attack, self).__init__()
@@ -384,7 +399,7 @@ class EnsembleFeatureLoss_OT_foa_attack(nn.Module):
             # print("gt_local",gt_local.shape)
             # print("feature_local", feature_local.shape)
             local_loss = self.OT(gt_local, feature_local)
-            
+
             # feat_loss = torch.mean(torch.sum(feature * gt, dim=1))
             feat_loss = self.OT(gt,feature)
 
@@ -395,7 +410,7 @@ class EnsembleFeatureLoss_OT_foa_attack(nn.Module):
             loss_list[i] + 0.2 * loss_local_list[i]
             for i in range(len(self.extractors))
         ]
-        # 初始化 previous_loss_list（首次）
+        # 初始化 previous_loss_list(首次)
         if len(self.previous_loss_list) == 0:
             self.previous_loss_list = [l.detach() for l in total_losses]
 
@@ -404,16 +419,16 @@ class EnsembleFeatureLoss_OT_foa_attack(nn.Module):
             ratio = total_losses[i].item() / (self.previous_loss_list[i].item() + 1e-8)
             weights.append(ratio)
             # 归一化 softmax 计算动态权重
-        
+
         T = 1.0
         K = len(weights)
         weights_np = np.array(weights)
         weights_softmax = np.exp(weights_np / T)
         weights_softmax /= np.sum(weights_softmax)
-        weights_softmax *= K  # 可选：缩放为 K
+        weights_softmax *= K  # 可选:缩放为 K
 
 
-        # 初始化 previous_loss_list（首次）
+        # 初始化 previous_loss_list(首次)
         for i in range(len(self.extractors)):
             self.previous_loss_list[i] = total_losses[i].detach()
 
@@ -509,7 +524,7 @@ class EnsembleFeatureLoss_OT_ablation_wo_global(nn.Module):
             loss_list[i] + 0.2 * loss_local_list[i]
             for i in range(len(self.extractors))
         ]
-        # 初始化 previous_loss_list（首次）
+        # 初始化 previous_loss_list(首次)
         if len(self.previous_loss_list) == 0:
             self.previous_loss_list = [l.detach() for l in total_losses]
 
@@ -518,16 +533,16 @@ class EnsembleFeatureLoss_OT_ablation_wo_global(nn.Module):
             ratio = total_losses[i].item() / (self.previous_loss_list[i].item() + 1e-8)
             weights.append(ratio)
             # 归一化 softmax 计算动态权重
-        
+
         T = 1.0
         K = len(weights)
         weights_np = np.array(weights)
         weights_softmax = np.exp(weights_np / T)
         weights_softmax /= np.sum(weights_softmax)
-        weights_softmax *= K  # 可选：缩放为 K
+        weights_softmax *= K  # 可选:缩放为 K
 
 
-        # 初始化 previous_loss_list（首次）
+        # 初始化 previous_loss_list(首次)
         for i in range(len(self.extractors)):
             self.previous_loss_list[i] = total_losses[i].detach()
 
@@ -578,7 +593,7 @@ class EnsembleFeatureLoss_OT_ablation_wo_global(nn.Module):
                 break
         T = torch.outer(r, c) * K
         return T
-    
+
 class EnsembleFeatureLoss_OT_ablation_wo_local(nn.Module):
     def __init__(self, extractors: List[BaseFeatureExtractor], cluster_number=5):
         super(EnsembleFeatureLoss_OT_ablation_wo_local, self).__init__()
@@ -605,7 +620,7 @@ class EnsembleFeatureLoss_OT_ablation_wo_local(nn.Module):
         loss_list = []
         loss_local_list = []
         for index, model in enumerate(self.extractors):
-            
+
             gt = self.ground_truth[index]
             feature = feature_dict[index].unsqueeze(0)
             feat_loss = self.OT(gt,feature)
@@ -616,7 +631,7 @@ class EnsembleFeatureLoss_OT_ablation_wo_local(nn.Module):
             loss_list[i]
             for i in range(len(self.extractors))
         ]
-        # 初始化 previous_loss_list（首次）
+        # 初始化 previous_loss_list(首次)
         if len(self.previous_loss_list) == 0:
             self.previous_loss_list = [l.detach() for l in total_losses]
 
@@ -625,16 +640,16 @@ class EnsembleFeatureLoss_OT_ablation_wo_local(nn.Module):
             ratio = total_losses[i].item() / (self.previous_loss_list[i].item() + 1e-8)
             weights.append(ratio)
             # 归一化 softmax 计算动态权重
-        
+
         T = 1.0
         K = len(weights)
         weights_np = np.array(weights)
         weights_softmax = np.exp(weights_np / T)
         weights_softmax /= np.sum(weights_softmax)
-        weights_softmax *= K  # 可选：缩放为 K
+        weights_softmax *= K  # 可选:缩放为 K
 
 
-        # 初始化 previous_loss_list（首次）
+        # 初始化 previous_loss_list(首次)
         for i in range(len(self.extractors)):
             self.previous_loss_list[i] = total_losses[i].detach()
 
@@ -685,7 +700,7 @@ class EnsembleFeatureLoss_OT_ablation_wo_local(nn.Module):
                 break
         T = torch.outer(r, c) * K
         return T
-    
+
 class EnsembleFeatureLoss_OT_ablation_wo_dynamic(nn.Module):
     def __init__(self, extractors: List[BaseFeatureExtractor], cluster_number=5):
         super(EnsembleFeatureLoss_OT_ablation_wo_dynamic, self).__init__()
@@ -712,7 +727,7 @@ class EnsembleFeatureLoss_OT_ablation_wo_dynamic(nn.Module):
         loss_list = []
         loss_local_list = []
         for index, model in enumerate(self.extractors):
-            
+
             gt = self.ground_truth[index]
             feature = feature_dict[index].unsqueeze(0)
             feat_loss = self.OT(gt,feature)
@@ -771,11 +786,11 @@ class EnsembleFeatureLoss_OT_ablation_wo_dynamic(nn.Module):
 
 class EnsembleFeatureLoss_OT_Gram(nn.Module):
     """
-    FOA-Attack 原有 OT loss（全局 + 局部聚类 OT）的基础上，
-    新增 Gram Matrix 风格损失：对齐 patch 特征的二阶统计量，
+    FOA-Attack 原有 OT loss(全局 + 局部聚类 OT)的基础上,
+    新增 Gram Matrix 风格损失:对齐 patch 特征的二阶统计量,
     实现整体纹理/风格/大局迁移。
 
-    接口与 EnsembleFeatureLoss_OT_foa_attack 完全兼容，
+    接口与 EnsembleFeatureLoss_OT_foa_attack 完全兼容,
     额外提供 gram_loss() 方法供外部计算 Gram MSE 项。
     """
 
@@ -804,7 +819,7 @@ class EnsembleFeatureLoss_OT_Gram(nn.Module):
 
     def __call__(self, feature_dict: Dict[int, Tensor], feature_local_dict: Dict[int, Tensor],
                  y: Any = None) -> Tensor:
-        """返回总 OT loss（全局 OT + 0.2*局部 OT），供 FOA Attack 优化用。"""
+        """返回总 OT loss(全局 OT + 0.2*局部 OT),供 FOA Attack 优化用。"""
         loss_list, loss_local_list = [], []
 
         for index, model in enumerate(self.extractors):
@@ -850,7 +865,7 @@ class EnsembleFeatureLoss_OT_Gram(nn.Module):
 
     def gram_loss(self, gram_adv: Tensor, idx: int) -> Tensor:
         """
-        Gram MSE loss：对抗图片的 Gram vs 目标图片的 Gram，
+        Gram MSE loss:对抗图片的 Gram vs 目标图片的 Gram,
         通过 cosine distance 度量纹理/风格相似度。
 
         gram_adv shape: [D, D] (squeezed from [1, D, D])

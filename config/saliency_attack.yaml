@@ -24,11 +24,17 @@ model:
   
   # ========== Saliency Attack 专用参数 ==========
   
-  # 显著性损失版本: v1 (基础), v2 (注意力), v3 (多层)
-  saliency_loss_version: v1
+  # 显著性损失版本: v1 (基础), v2 (注意力), v3 (多层),
+  #   semantic_distance (语义距离自适应 alpha)
+  saliency_loss_version: semantic_distance
   
   # 显著性比例：抑制前 X% 高显著区域
   saliency_ratio: 0.3
+
+  
+  # 语义距离加权的 base alpha（仅 semantic_distance 版本使用）
+  base_alpha: 1.0
+  sigmoid_scale: 10.0
 
 
 data:

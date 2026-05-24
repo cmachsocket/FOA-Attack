@@ -42,6 +42,25 @@ class ClipLaionFeatureExtractor(BaseFeatureExtractor):
         local_feature = local_feature / local_feature.norm(dim=1, keepdim=True)
         return global_feature, local_feature
 
+    def intermediate_features(self, x):
+        """Return features from all transformer layers."""
+        inputs = dict(pixel_values=self.normalizer(x))
+        outputs = self.model.vision_model(
+            pixel_values=inputs['pixel_values'],
+            output_hidden_states=True,
+        )
+        all_hidden_states = outputs.hidden_states
+
+        all_features, all_global, all_local = [], [], []
+        for hs in all_hidden_states:
+            all_features.append(hs)
+            cls_tok = hs[:, 0, :] / (hs[:, 0, :].norm(dim=1, keepdim=True) + 1e-8)
+            patch_tok = hs[:, 1:, :] / (hs[:, 1:, :].norm(dim=1, keepdim=True) + 1e-8)
+            all_global.append(cls_tok)
+            all_local.append(patch_tok)
+
+        return all_features, all_global, all_local
+
     def spatial_gram_features(self, x):
         """Return spatial [B,C,H,W] patch features reshaped from patch tokens + Gram matrix."""
         inputs = dict(pixel_values=self.normalizer(x))

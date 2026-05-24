@@ -71,6 +71,7 @@ from saliency_loss import (
     SaliencySuppressionReconstructionLossV2,
     SaliencySuppressionReconstructionLossV3,
 )
+from semantic_distance_loss import SemanticDistanceLoss
 
 from utils import hash_training_config, setup_wandb, ensure_dir
 
@@ -120,11 +121,20 @@ def get_saliency_loss(cfg: MainConfig, models: List[nn.Module], version: str = "
     Args:
         cfg: 配置
         models: 模型列表
-        version: 损失版本 ("v1", "v2", "v3")
+        version: 损失版本 ("v1", "v2", "v3", "semantic_distance")
     """
-    loss_class = SALIENCY_LOSS_MAP.get(version, SaliencySuppressionReconstructionLoss)
-    
     saliency_ratio = getattr(cfg.model, 'saliency_ratio', 0.3)
+    
+    if version == "semantic_distance":
+        return SemanticDistanceLoss(
+            extractors=models,
+            saliency_ratio=saliency_ratio,
+            base_alpha=getattr(cfg.model, 'base_alpha', 0.5),
+            sigmoid_scale=getattr(cfg.model, 'sigmoid_scale', 6.0),
+            local_weight=0.2,
+        )
+    
+    loss_class = SALIENCY_LOSS_MAP.get(version, SaliencySuppressionReconstructionLoss)
     
     saliency_loss = loss_class(
         extractors=models,
@@ -197,10 +207,10 @@ def main(cfg: MainConfig):
     target_data = ImageFolderWithPaths(cfg.data.tgt_data_path, transform=transform_fn)
 
     data_loader_imagenet = torch.utils.data.DataLoader(
-        clean_data, batch_size=cfg.data.batch_size, shuffle=False, num_workers=4
+        clean_data, batch_size=cfg.data.batch_size, shuffle=False
     )
     data_loader_target = torch.utils.data.DataLoader(
-        target_data, batch_size=cfg.data.batch_size, shuffle=False,num_workers=4
+        target_data, batch_size=cfg.data.batch_size, shuffle=False
     )
 
     print("Using source crop:", cfg.model.use_source_crop)
@@ -264,12 +274,13 @@ def attack_imgpair(
 ):
     print(f"  source: {path_org[0].split('/')[-2]}/{path_org[0].split('/')[-1]}  →  target: {path_tgt[0].split('/')[-2]}/{path_tgt[0].split('/')[-1]}")
     image_org, image_tgt = image_org.to(cfg.model.device), image_tgt.to(cfg.model.device)
-    attack_type = cfg.attack
+    attack_type = cfg.attack.type
     attack_fn = {
         "fgsm": fgsm_attack,
         "mifgsm": mifgsm_attack,
         "pgd": pgd_attack,
     }[attack_type]
+    saliency_version = getattr(cfg.model, 'saliency_loss_version', 'v1')
     adv_image = attack_fn(
         cfg=cfg,
         ensemble_extractor=ensemble_extractor,
@@ -325,16 +336,16 @@ def fgsm_attack(
     image_tgt: torch.Tensor,
 ):
     """FGSM attack with Saliency Suppression Reconstruction Loss"""
+    saliency_version = getattr(cfg.model, 'saliency_loss_version', 'v1')
     delta = torch.zeros_like(image_org, requires_grad=True)
     pbar = tqdm(range(cfg.optim.steps), desc=f"Saliency Attack progress")
     total_steps = cfg.optim.steps
 
     for epoch in pbar:
         with torch.no_grad():
-            saliency_loss.set_ground_truth(target_crop(image_tgt))
+            saliency_loss.set_ground_truth(target_crop(image_tgt), source_crop(image_org))
 
         adv_image = image_org + delta
-        adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
 
         metrics = {
             "max_delta": torch.max(torch.abs(delta)).item(),
@@ -342,22 +353,36 @@ def fgsm_attack(
         }
 
         # 使用显著性损失（传入原始 patch embeddings）
-        global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
-        metrics["global_similarity"] = global_sim.item()
+        if saliency_version == "semantic_distance":
+            all_global, all_local = ensemble_extractor.intermediate_forward(adv_image)
+            global_sim = saliency_loss(all_global, all_local, total_steps=total_steps)
+            metrics["global_similarity"] = global_sim.item()
 
-        if cfg.model.use_source_crop:
-            local_cropped = source_crop(adv_image)
-            local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-            # ── 检查特征是否有效，避免 kmeans 空 cluster 崩溃 ──
-            if local_features_raw.abs().sum() > 0:
-                local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+            if cfg.model.use_source_crop:
+                local_cropped = source_crop(adv_image)
+                all_global_crop, all_local_crop = ensemble_extractor.intermediate_forward(local_cropped)
+                local_sim = saliency_loss(all_global_crop, all_local_crop, total_steps=total_steps)
                 loss = local_sim
                 metrics["local_similarity"] = local_sim.item()
             else:
                 loss = global_sim
-                metrics["local_similarity"] = float("nan")
         else:
-            loss = global_sim
+            adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
+            global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
+            metrics["global_similarity"] = global_sim.item()
+
+            if cfg.model.use_source_crop:
+                local_cropped = source_crop(adv_image)
+                local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
+                if local_features_raw.abs().sum() > 0:
+                    local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+                    loss = local_sim
+                    metrics["local_similarity"] = local_sim.item()
+                else:
+                    loss = global_sim
+                    metrics["local_similarity"] = float("nan")
+            else:
+                loss = global_sim
 
         log_metrics(pbar, metrics, img_index, epoch)
 
@@ -386,6 +411,7 @@ def mifgsm_attack(
     image_tgt: torch.Tensor,
 ):
     """MI-FGSM attack with Saliency Suppression Reconstruction Loss"""
+    saliency_version = getattr(cfg.model, 'saliency_loss_version', 'v1')
     delta = torch.zeros_like(image_org, requires_grad=True)
     momentum = torch.zeros_like(image_org, requires_grad=False)
     pbar = tqdm(range(cfg.optim.steps), desc=f"Saliency Attack progress")
@@ -393,32 +419,45 @@ def mifgsm_attack(
 
     for epoch in pbar:
         with torch.no_grad():
-            saliency_loss.set_ground_truth(target_crop(image_tgt))
+            saliency_loss.set_ground_truth(target_crop(image_tgt), source_crop(image_org))
 
         adv_image = image_org + delta
-        adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
 
         metrics = {
             "max_delta": torch.max(torch.abs(delta)).item(),
             "mean_delta": torch.mean(torch.abs(delta)).item(),
         }
 
-        global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
-        metrics["global_similarity"] = global_sim.item()
+        if saliency_version == "semantic_distance":
+            all_global, all_local = ensemble_extractor.intermediate_forward(adv_image)
+            global_sim = saliency_loss(all_global, all_local, total_steps=total_steps)
+            metrics["global_similarity"] = global_sim.item()
 
-        if cfg.model.use_source_crop:
-            local_cropped = source_crop(adv_image)
-            local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-            # ── 检查特征是否有效，避免 kmeans 空 cluster 崩溃 ──
-            if local_features_raw.abs().sum() > 0:
-                local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+            if cfg.model.use_source_crop:
+                local_cropped = source_crop(adv_image)
+                all_global_crop, all_local_crop = ensemble_extractor.intermediate_forward(local_cropped)
+                local_sim = saliency_loss(all_global_crop, all_local_crop, total_steps=total_steps)
                 loss = local_sim
                 metrics["local_similarity"] = local_sim.item()
             else:
                 loss = global_sim
-                metrics["local_similarity"] = float("nan")
         else:
-            loss = global_sim
+            adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
+            global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
+            metrics["global_similarity"] = global_sim.item()
+
+            if cfg.model.use_source_crop:
+                local_cropped = source_crop(adv_image)
+                local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
+                if local_features_raw.abs().sum() > 0:
+                    local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+                    loss = local_sim
+                    metrics["local_similarity"] = local_sim.item()
+                else:
+                    loss = global_sim
+                    metrics["local_similarity"] = float("nan")
+            else:
+                loss = global_sim
 
         log_metrics(pbar, metrics, img_index, epoch)
 
@@ -449,38 +488,52 @@ def pgd_attack(
     image_tgt: torch.Tensor,
 ):
     """PGD attack with Saliency Suppression Reconstruction Loss"""
+    saliency_version = getattr(cfg.model, 'saliency_loss_version', 'v1')
     delta = torch.zeros_like(image_org, requires_grad=True)
     pbar = tqdm(range(cfg.optim.steps), desc=f"Saliency Attack progress")
     total_steps = cfg.optim.steps
 
     for epoch in pbar:
         with torch.no_grad():
-            saliency_loss.set_ground_truth(target_crop(image_tgt))
+            saliency_loss.set_ground_truth(target_crop(image_tgt), source_crop(image_org))
 
         adv_image = image_org + delta
-        adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
 
         metrics = {
             "max_delta": torch.max(torch.abs(delta)).item(),
             "mean_delta": torch.mean(torch.abs(delta)).item(),
         }
 
-        global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
-        metrics["global_similarity"] = global_sim.item()
+        if saliency_version == "semantic_distance":
+            all_global, all_local = ensemble_extractor.intermediate_forward(adv_image)
+            global_sim = saliency_loss(all_global, all_local, total_steps=total_steps)
+            metrics["global_similarity"] = global_sim.item()
 
-        if cfg.model.use_source_crop:
-            local_cropped = source_crop(adv_image)
-            local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-            # ── 检查特征是否有效，避免 kmeans 空 cluster 崩溃 ──
-            if local_features_raw.abs().sum() > 0:
-                local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+            if cfg.model.use_source_crop:
+                local_cropped = source_crop(adv_image)
+                all_global_crop, all_local_crop = ensemble_extractor.intermediate_forward(local_cropped)
+                local_sim = saliency_loss(all_global_crop, all_local_crop, total_steps=total_steps)
                 loss = local_sim
                 metrics["local_similarity"] = local_sim.item()
             else:
                 loss = global_sim
-                metrics["local_similarity"] = float("nan")
         else:
-            loss = global_sim
+            adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
+            global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
+            metrics["global_similarity"] = global_sim.item()
+
+            if cfg.model.use_source_crop:
+                local_cropped = source_crop(adv_image)
+                local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
+                if local_features_raw.abs().sum() > 0:
+                    local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
+                    loss = local_sim
+                    metrics["local_similarity"] = local_sim.item()
+                else:
+                    loss = global_sim
+                    metrics["local_similarity"] = float("nan")
+            else:
+                loss = global_sim
 
         log_metrics(pbar, metrics, img_index, epoch)
 

@@ -24,3 +24,32 @@ class ClipL336FeatureExtractor(BaseFeatureExtractor):
         image_features = self.model.get_image_features(**inputs)
         image_features = image_features / image_features.norm(dim=1, keepdim=True)
         return image_features
+
+    def global_local_features(self, x):
+        inputs = dict(pixel_values=self.normalizer(x))
+        outputs = self.model.vision_model(pixel_values=inputs['pixel_values'])
+        features = outputs.last_hidden_state
+        global_feature = features[:, 0, :]
+        global_feature = global_feature / global_feature.norm(dim=1, keepdim=True)
+        local_feature = features[:, 1:, :]
+        local_feature = local_feature / local_feature.norm(dim=1, keepdim=True)
+        return global_feature, local_feature
+
+    def intermediate_features(self, x):
+        """Return features from all transformer layers."""
+        inputs = dict(pixel_values=self.normalizer(x))
+        outputs = self.model.vision_model(
+            pixel_values=inputs['pixel_values'],
+            output_hidden_states=True,
+        )
+        all_hidden_states = outputs.hidden_states
+
+        all_features, all_global, all_local = [], [], []
+        for hs in all_hidden_states:
+            all_features.append(hs)
+            cls_tok = hs[:, 0, :] / (hs[:, 0, :].norm(dim=1, keepdim=True) + 1e-8)
+            patch_tok = hs[:, 1:, :] / (hs[:, 1:, :].norm(dim=1, keepdim=True) + 1e-8)
+            all_global.append(cls_tok)
+            all_local.append(patch_tok)
+
+        return all_features, all_global, all_local
