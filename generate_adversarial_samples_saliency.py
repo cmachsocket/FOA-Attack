@@ -362,10 +362,10 @@ def fgsm_attack(
                 local_cropped = source_crop(adv_image)
                 all_global_crop, all_local_crop = ensemble_extractor.intermediate_forward(local_cropped)
                 local_sim = saliency_loss(all_global_crop, all_local_crop, total_steps=total_steps)
-                loss = -local_sim
+                loss = local_sim
                 metrics["local_similarity"] = local_sim.item()
             else:
-                loss = -global_sim
+                loss = global_sim
         else:
             adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
             global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
@@ -376,13 +376,13 @@ def fgsm_attack(
                 local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
                 if local_features_raw.abs().sum() > 0:
                     local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
-                    loss = -local_sim
+                    loss = local_sim
                     metrics["local_similarity"] = local_sim.item()
                 else:
-                    loss = -global_sim
+                    loss = global_sim
                     metrics["local_similarity"] = float("nan")
             else:
-                loss = -global_sim
+                loss = global_sim
 
         log_metrics(pbar, metrics, img_index, epoch)
 
@@ -437,10 +437,10 @@ def mifgsm_attack(
                 local_cropped = source_crop(adv_image)
                 all_global_crop, all_local_crop = ensemble_extractor.intermediate_forward(local_cropped)
                 local_sim = saliency_loss(all_global_crop, all_local_crop, total_steps=total_steps)
-                loss = -local_sim
+                loss = local_sim
                 metrics["local_similarity"] = local_sim.item()
             else:
-                loss = -global_sim
+                loss = global_sim
         else:
             adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
             global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
@@ -451,13 +451,13 @@ def mifgsm_attack(
                 local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
                 if local_features_raw.abs().sum() > 0:
                     local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
-                    loss = -local_sim
+                    loss = local_sim
                     metrics["local_similarity"] = local_sim.item()
                 else:
-                    loss = -global_sim
+                    loss = global_sim
                     metrics["local_similarity"] = float("nan")
             else:
-                loss = -global_sim
+                loss = global_sim
 
         log_metrics(pbar, metrics, img_index, epoch)
 
@@ -513,10 +513,10 @@ def pgd_attack(
                 local_cropped = source_crop(adv_image)
                 all_global_crop, all_local_crop = ensemble_extractor.intermediate_forward(local_cropped)
                 local_sim = saliency_loss(all_global_crop, all_local_crop, total_steps=total_steps)
-                loss = -local_sim
+                loss = local_sim
                 metrics["local_similarity"] = local_sim.item()
             else:
-                loss = -global_sim
+                loss = global_sim
         else:
             adv_features, adv_features_local, adv_features_raw = ensemble_extractor(adv_image)
             global_sim = saliency_loss(adv_features, adv_features_raw, total_steps=total_steps)
@@ -527,13 +527,13 @@ def pgd_attack(
                 local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
                 if local_features_raw.abs().sum() > 0:
                     local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
-                    loss = -local_sim
+                    loss = local_sim
                     metrics["local_similarity"] = local_sim.item()
                 else:
-                    loss = -global_sim
+                    loss = global_sim
                     metrics["local_similarity"] = float("nan")
             else:
-                loss = -global_sim
+                loss = global_sim
 
         log_metrics(pbar, metrics, img_index, epoch)
 

@@ -130,14 +130,14 @@ class SemanticDistanceLoss(nn.Module):
 
     def _compute_patch_loss(self, local_feat: torch.Tensor, tgt_local: torch.Tensor,
                             alpha: float) -> torch.Tensor:
-        """显著性 Top-K 过滤 + 抑制重建（与 V1 一致）"""
+        """显著性 Top-K 过滤 + 抑制重建"""
         feat_norm = torch.norm(local_feat, dim=-1)  # [B, N]
         num_patches = feat_norm.shape[-1]
         k = max(1, int(num_patches * self.saliency_ratio))
         _, topk_idx = torch.topk(feat_norm, k=k, dim=-1)  # [B, k]
 
-        mask = torch.zeros_like(feat_norm)
-        mask.scatter_(-1, topk_idx.long(), 1.0)
+        mask = torch.zeros(feat_norm.shape, dtype=torch.float32, device=feat_norm.device)
+        mask.scatter_(1, topk_idx.long(), 1.0)
 
         reconstructed = local_feat * (1 - alpha * mask.unsqueeze(-1)) \
                       + tgt_local * (alpha * mask.unsqueeze(-1))
