@@ -20,7 +20,7 @@ model:
   use_target_crop: true
   
   # 裁剪 scale
-  crop_scale: [0.5, 0.9] 
+  crop_scale: [0.6, 0.9] 
   
   # ========== Saliency Attack 专用参数 ==========
   
@@ -29,7 +29,7 @@ model:
   saliency_loss_version: semantic_distance
   
   # 显著性比例：抑制前 X% 高显著区域
-  saliency_ratio: 0.3
+  saliency_ratio: 0.6
 
   
   # 语义距离加权的 base alpha（仅 semantic_distance 版本使用）
@@ -43,10 +43,10 @@ data:
   tgt_data_path: "resources/images/target_images"
   
   # batch size（建议 1）
-  batch_size: 1
+  batch_size: 2
   
   # 总样本数（设为 -1 处理全部）
-  num_samples: 1000
+  num_samples: 100
 
 
 attack:
@@ -64,6 +64,8 @@ optim:
   # 迭代步数
   steps: 300
 
+blackbox:
+  model_name: "qwen3.5-9B"  # 可选 gpt4o, claude, gemini, gpt_4v, llava
 
 wandb:
   project: foa-saliency-attack

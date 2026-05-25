@@ -188,7 +188,7 @@ def save_descriptions(descriptions: List[Tuple[str, str]], output_file: str):
             f.write(f"{filename}: {desc}\n")
 
 
-@hydra.main(version_base=None, config_path="config", config_name="ensemble_3models")
+@hydra.main(version_base=None, config_path="config", config_name="saliency_attack")
 def main(cfg: MainConfig):
     # Initialize wandb using shared utility
     setup_wandb(cfg)

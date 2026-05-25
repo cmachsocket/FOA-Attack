@@ -86,7 +86,7 @@ def save_scores(scores: List[Tuple[str, str, str, float]], output_file: str):
             f.write(f"{filename} | {orig} | {adv} | {score:.4f}\n")
 
 
-@hydra.main(version_base=None, config_path="config", config_name="ensemble_3models")
+@hydra.main(version_base=None, config_path="config", config_name="saliency_attack")
 def main(cfg: MainConfig):
     # Initialize wandb
     config_dict = OmegaConf.to_container(cfg, resolve=True)
