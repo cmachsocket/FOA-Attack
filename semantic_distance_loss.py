@@ -130,14 +130,21 @@ class SemanticDistanceLoss(nn.Module):
 
     def _compute_patch_loss(self, local_feat: torch.Tensor, tgt_local: torch.Tensor,
                             alpha: float) -> torch.Tensor:
-        """显著性 Top-K 过滤 + 抑制重建"""
-        feat_norm = torch.norm(local_feat, dim=-1)  # [B, N]
-        num_patches = feat_norm.shape[-1]
-        k = max(1, int(num_patches * self.saliency_ratio))
-        _, topk_idx = torch.topk(feat_norm, k=k, dim=-1)  # [B, k]
+        """显著性 Top-K 过滤 + 抑制重建
 
-        mask = torch.zeros(feat_norm.shape, dtype=torch.float32, device=feat_norm.device)
-        mask.scatter_(1, topk_idx.long(), 1.0)
+        Top-K 按 patch 与目标的余弦相似度升序排列：
+        相似度越低 = 该 patch 离目标越远 = 越需要被抑制重建。
+        """
+        # [B, N] 沿最后一维计算与目标的余弦相似度
+        sim_to_tgt = F.cosine_similarity(local_feat, tgt_local, dim=-1)  # [B, N]
+        num_patches = sim_to_tgt.shape[-1]
+        k = max(1, int(num_patches * self.saliency_ratio))
+
+        # 相似度越低的 patch 越需要重建 → largest=False 取升序 topk（小到大）
+        _, bottomk_idx = torch.topk(sim_to_tgt, k=k, dim=-1, largest=False)  # [B, k]
+
+        mask = torch.zeros(sim_to_tgt.shape, dtype=torch.float32, device=sim_to_tgt.device)
+        mask.scatter_(1, bottomk_idx.long(), 1.0)
 
         reconstructed = local_feat * (1 - alpha * mask.unsqueeze(-1)) \
                       + tgt_local * (alpha * mask.unsqueeze(-1))

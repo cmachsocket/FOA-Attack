@@ -33,8 +33,8 @@ model:
 
   
   # 语义距离加权的 base alpha（仅 semantic_distance 版本使用）
-  base_alpha: 1.0
-  sigmoid_scale: 10.0
+  base_alpha: 1.2
+  sigmoid_scale: 3.0
 
 
 data:
