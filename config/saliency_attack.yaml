@@ -43,7 +43,7 @@ data:
   tgt_data_path: "resources/images/target_images"
   
   # batch size（建议 1）
-  batch_size: 2
+  batch_size: 1
   
   # 总样本数（设为 -1 处理全部）
   num_samples: 100
