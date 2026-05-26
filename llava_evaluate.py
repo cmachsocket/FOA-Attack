@@ -58,6 +58,7 @@ class LLavaScorer:
             messages=[{"role": "user", "content": prompt}],
             max_tokens=100,
             temperature=0.0,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}}
         )
         score = response.choices[0].message.content.strip()
         return min(1.0, max(0.0, float(score)))
