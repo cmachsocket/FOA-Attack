@@ -61,9 +61,10 @@ class ModelConfig:
     gram_loss_weight: float = 1.0      # 新增：Gram loss 权重
     
     # Saliency Attack 参数
-    saliency_loss_version: str = "v1"   # 显著性损失版本: v1, v2, v3
+    saliency_loss_version: str = "v1"   # 显著性损失版本: v1, v2, v3, semantic_distance
     saliency_ratio: float = 0.3         # 显著性比例：抑制前 X% 高显著区域
     alpha_schedule: str = "cosine"     # alpha 调度策略: linear, cosine, step
+    ema_beta: float = 0.9             # EMA 平滑系数（每步动态 alpha 的平滑程度）
 
 
 @dataclass

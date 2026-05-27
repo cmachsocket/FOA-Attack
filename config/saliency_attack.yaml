@@ -35,6 +35,10 @@ model:
   # 语义距离加权的 base alpha（仅 semantic_distance 版本使用）
   base_alpha: 1.2
   sigmoid_scale: 5.0
+  
+  # EMA 平滑系数（仅 semantic_distance 版本使用）
+  # 越小越敏感（接近原始值），越大越平滑（惯性更强）
+  ema_beta: 0.9
 
 
 data:

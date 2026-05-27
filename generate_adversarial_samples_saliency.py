@@ -132,6 +132,7 @@ def get_saliency_loss(cfg: MainConfig, models: List[nn.Module], version: str = "
             base_alpha=getattr(cfg.model, 'base_alpha', 0.5),
             sigmoid_scale=getattr(cfg.model, 'sigmoid_scale', 6.0),
             local_weight=0.2,
+            ema_beta=getattr(cfg.model, 'ema_beta', 0.9),
         )
     
     loss_class = SALIENCY_LOSS_MAP.get(version, SaliencySuppressionReconstructionLoss)

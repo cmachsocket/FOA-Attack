@@ -7,7 +7,7 @@ Semantic Distance Weighted Loss for Intermediate Layers
   → dist 越大 = 该层离目标越远 = 需要更大的更新力度
 - alpha_l = base * sigmoid(w * dist_l + b)
   → 越不相似的层 alpha 越大，强制快速追赶
-- 不依赖梯度一致性排序，在初始化时一次性计算，无额外训练开销
+- 每步 forward 都重新计算当前层的 dist，用 EMA 平滑噪声
 """
 
 import torch
@@ -21,7 +21,7 @@ class SemanticDistanceLoss(nn.Module):
     """
     语义距离加权损失
 
-    每层的 alpha 由该层在初始化时与目标的语义距离决定。
+    每层的 alpha 由该层当前与目标的语义距离动态决定（每步更新）。
     距离越远 → alpha 越大 → 强制追赶。
 
     与 Progressive Unfolding 的区别：
@@ -34,7 +34,8 @@ class SemanticDistanceLoss(nn.Module):
                  saliency_ratio: float = 0.3,
                  base_alpha: float = 0.5,
                  sigmoid_scale: float = 6.0,
-                 local_weight: float = 0.2):
+                 local_weight: float = 0.2,
+                 ema_beta: float = 0.9):
         super(SemanticDistanceLoss, self).__init__()
         self.extractors = nn.ModuleList(extractors)
 
@@ -45,37 +46,20 @@ class SemanticDistanceLoss(nn.Module):
         # 源图特征 per layer per model（用于计算 dist，只存一次）
         self.src_local_per_layer = []   # list of {model_idx: [N, D]} per layer
 
-        self.layer_dist = None          # list of float
-
         self.saliency_ratio = saliency_ratio
         self.base_alpha = base_alpha
         self.sigmoid_scale = sigmoid_scale
         self.local_weight = local_weight
-        self._dist_computed = False
+        self.ema_beta = ema_beta
 
-    def _compute_layer_distances(self):
-        """dist_l = 1 - mean(cos(patch_src[l], patch_tgt[l]))"""
-        dist_per_layer = []
-        num_layers = len(self.gt_local_per_layer)
+        # EMA 平滑后的每层 dist（每步更新）
+        self.dist_ema = None   # list of float
 
-        for li in range(num_layers):
-            sim_list = []
-            for model_idx in self.gt_local_per_layer[li]:
-                src_local = self.src_local_per_layer[li][model_idx].unsqueeze(0)
-                tgt_local = self.gt_local_per_layer[li][model_idx].unsqueeze(0)
-                sim = F.cosine_similarity(src_local, tgt_local, dim=-1)
-                sim_list.append(sim.mean().item())
-            dist = 1.0 - np.mean(sim_list)
-            dist_per_layer.append(dist)
+        # 初始化时的静态 dist（仅用于日志/调试）
+        self.layer_dist_init = None
 
-        self.layer_dist = dist_per_layer
-        self._dist_computed = True
-        return dist_per_layer
-
-    def _get_layer_alpha(self, layer_idx: int) -> float:
-        if self.layer_dist is None:
-            return self.base_alpha
-        dist = self.layer_dist[layer_idx]
+    def _sigmoid_alpha(self, dist: float) -> float:
+        """给定一个 dist 值，计算对应的 alpha（sigmoid 映射）"""
         alpha = self.base_alpha * (1.0 / (1.0 + np.exp(-self.sigmoid_scale * (dist - 0.5))))
         return alpha
 
@@ -83,7 +67,7 @@ class SemanticDistanceLoss(nn.Module):
     def set_ground_truth(self, tgt_image: torch.Tensor, src_image: torch.Tensor = None):
         """
         每次调用都要重新提取目标特征。
-        第一次调用时如果传了 src_image，顺便存下来并计算 dist。
+        第一次调用时如果传了 src_image，顺便存下来并计算初始 dist（用于日志）。
         后续调用只需 tgt_image（src 已缓存）。
         """
         new_tgt_global = []
@@ -93,7 +77,6 @@ class SemanticDistanceLoss(nn.Module):
             _, all_global, all_local = model.intermediate_features(tgt_image.to(tgt_image.device))
             num_layers = len(all_global)
 
-            # Extend lists if this model has more layers than previous models
             while len(new_tgt_global) < num_layers:
                 new_tgt_global.append({})
                 new_tgt_local.append({})
@@ -102,8 +85,8 @@ class SemanticDistanceLoss(nn.Module):
                 new_tgt_global[li][model_idx] = all_global[li].squeeze(0)
                 new_tgt_local[li][model_idx] = all_local[li].squeeze(0)
 
-        # 第一次调用：存源图特征 + 计算 dist
-        if src_image is not None and not self._dist_computed:
+        # 第一次调用：存源图特征 + 计算初始 dist
+        if src_image is not None and self.dist_ema is None:
             src_global = []
             src_local = []
             for model_idx, model in enumerate(self.extractors):
@@ -120,13 +103,31 @@ class SemanticDistanceLoss(nn.Module):
             self.gt_global_per_layer = new_tgt_global
             self.gt_local_per_layer = new_tgt_local
 
-            dist = self._compute_layer_distances()
-            print(f"[SemanticDistance] Layer dist: {[f'{d:.3f}' for d in dist]}")
-            print(f"[SemanticDistance] Layer alphas: {[f'{self._get_layer_alpha(li):.3f}' for li in range(len(dist))]}")
+            # 初始化 EMA 列表（每层一个初始 dist）
+            num_layers = len(src_local)
+            dist_init = []
+            for li in range(num_layers):
+                sim_list = []
+                for model_idx in src_local[li]:
+                    src_p = self.src_local_per_layer[li][model_idx].unsqueeze(0)
+                    tgt_p = self.gt_local_per_layer[li][model_idx].unsqueeze(0)
+                    sim = F.cosine_similarity(src_p, tgt_p, dim=-1)
+                    sim_list.append(sim.mean().item())
+                dist_init.append(1.0 - np.mean(sim_list))
+
+            self.dist_ema = dist_init[:]
+            self.layer_dist_init = dist_init[:]
+
+            print(f"[SemanticDistance] Init layer dist: {[f'{d:.3f}' for d in dist_init]}")
+            print(f"[SemanticDistance] Init layer alphas: {[f'{self._sigmoid_alpha(d):.3f}' for d in dist_init]}")
         else:
-            # 后续调用：只更新目标特征
             self.gt_global_per_layer = new_tgt_global
             self.gt_local_per_layer = new_tgt_local
+
+    def _compute_current_dist(self, adv_local: torch.Tensor, tgt_local: torch.Tensor) -> float:
+        """计算当前 adv 和 target 之间的 patch 余弦距离（单模型单层）"""
+        sim = F.cosine_similarity(adv_local, tgt_local, dim=-1).mean().item()
+        return 1.0 - sim
 
     def _compute_patch_loss(self, local_feat: torch.Tensor, tgt_local: torch.Tensor,
                             alpha: float) -> torch.Tensor:
@@ -139,8 +140,7 @@ class SemanticDistanceLoss(nn.Module):
         num_patches = sim_to_tgt.shape[-1]
         k = max(1, int(num_patches * self.saliency_ratio))
 
-        # Top-K 按 patch 与目标的余弦相似度降序排列：
-        # 相似度越高 = 该 patch 已越接近目标 = 越需要被进一步强化逼近
+        # Top-K 按 patch 与目标的余弦相似度降序排列
         _, topk_idx = torch.topk(sim_to_tgt, k=k, dim=-1, largest=True)  # [B, k]
 
         mask = torch.zeros(sim_to_tgt.shape, dtype=torch.float32, device=sim_to_tgt.device)
@@ -159,17 +159,45 @@ class SemanticDistanceLoss(nn.Module):
                 total_steps=None,
                 y: any = None) -> torch.Tensor:
         """
-        兼容 V1 接口：total_steps 可不传
+        每步都计算当前层的实际 dist，用 EMA 平滑后算 alpha。
         """
         loss_global_total = 0.0
         loss_local_total = 0.0
         num_active = 0
 
-        for li in range(len(self.gt_global_per_layer)):
-            layer_alpha = self._get_layer_alpha(li)
-            for model_idx in range(len(self.extractors)):
-                if model_idx not in self.gt_global_per_layer[li]:
-                    continue
+        num_layers = len(self.gt_global_per_layer)
+
+        for li in range(num_layers):
+            # 获取当前层所有模型的平均当前 dist
+            cur_dists = []
+            for model_idx in self.gt_local_per_layer[li]:
+                if model_idx in all_local_dict and li < len(all_local_dict[model_idx]):
+                    adv_local = all_local_dict[model_idx][li]
+                    tgt_local = self.gt_local_per_layer[li][model_idx]
+                    d = self._compute_current_dist(adv_local, tgt_local)
+                    cur_dists.append(d)
+
+            if not cur_dists:
+                continue
+
+            # 当前 step 的平均 dist
+            current_dist = np.mean(cur_dists)
+
+            # EMA 平滑
+            if self.dist_ema is not None and li < len(self.dist_ema):
+                self.dist_ema[li] = self.ema_beta * self.dist_ema[li] + (1 - self.ema_beta) * current_dist
+            else:
+                # 防御性初始化
+                if self.dist_ema is None:
+                    self.dist_ema = [0.0] * num_layers
+                while li >= len(self.dist_ema):
+                    self.dist_ema.append(0.0)
+                self.dist_ema[li] = current_dist
+
+            # 用 EMA 平滑后的 dist 算 alpha
+            layer_alpha = self._sigmoid_alpha(self.dist_ema[li])
+
+            for model_idx in self.gt_global_per_layer[li]:
                 if model_idx not in all_global_dict or li >= len(all_global_dict[model_idx]):
                     continue
 
@@ -192,6 +220,6 @@ class SemanticDistanceLoss(nn.Module):
         return total_loss
 
     def get_layer_alphas(self) -> List[float]:
-        if self.layer_dist is None:
+        if self.dist_ema is None:
             return [self.base_alpha] * max(len(self.gt_global_per_layer), 1)
-        return [self._get_layer_alpha(li) for li in range(len(self.layer_dist))]
+        return [self._sigmoid_alpha(d) for d in self.dist_ema]
