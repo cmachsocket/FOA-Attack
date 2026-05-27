@@ -29,7 +29,7 @@ model:
   saliency_loss_version: semantic_distance
   
   # 显著性比例：抑制前 X% 高显著区域
-  saliency_ratio: 1
+  saliency_ratio: 0.3
 
   
   # 语义距离加权的 base alpha（仅 semantic_distance 版本使用）

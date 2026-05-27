@@ -133,18 +133,18 @@ class SemanticDistanceLoss(nn.Module):
         """显著性 Top-K 过滤 + 抑制重建
 
         Top-K 按 patch 与目标的余弦相似度升序排列：
-        相似度越低 = 该 patch 离目标越远 = 越需要被抑制重建。
-        """
+        切换为 largest=True 取最大相似度 patch（原来是 largest=False 取最小相似度）。
         # [B, N] 沿最后一维计算与目标的余弦相似度
         sim_to_tgt = F.cosine_similarity(local_feat, tgt_local, dim=-1)  # [B, N]
         num_patches = sim_to_tgt.shape[-1]
         k = max(1, int(num_patches * self.saliency_ratio))
 
-        # 相似度越低的 patch 越需要重建 → largest=False 取升序 topk（小到大）
-        _, bottomk_idx = torch.topk(sim_to_tgt, k=k, dim=-1, largest=False)  # [B, k]
+        # Top-K 按 patch 与目标的余弦相似度降序排列：
+        # 相似度越高 = 该 patch 已越接近目标 = 越需要被进一步强化逼近
+        _, topk_idx = torch.topk(sim_to_tgt, k=k, dim=-1, largest=True)  # [B, k]
 
         mask = torch.zeros(sim_to_tgt.shape, dtype=torch.float32, device=sim_to_tgt.device)
-        mask.scatter_(1, bottomk_idx.long(), 1.0)
+        mask.scatter_(1, topk_idx.long(), 1.0)
 
         reconstructed = local_feat * (1 - alpha * mask.unsqueeze(-1)) \
                       + tgt_local * (alpha * mask.unsqueeze(-1))
