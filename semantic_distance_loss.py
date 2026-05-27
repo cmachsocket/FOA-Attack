@@ -130,10 +130,10 @@ class SemanticDistanceLoss(nn.Module):
 
     def _compute_patch_loss(self, local_feat: torch.Tensor, tgt_local: torch.Tensor,
                             alpha: float) -> torch.Tensor:
-        """显著性 Top-K 过滤 + 抑制重建
-
-        Top-K 按 patch 与目标的余弦相似度升序排列：
+        """Top-K 按 patch 与目标的余弦相似度降序排列：
+        相似度越高 = 该 patch 已越接近目标 = 越需要被进一步强化逼近。
         切换为 largest=True 取最大相似度 patch（原来是 largest=False 取最小相似度）。
+        """
         # [B, N] 沿最后一维计算与目标的余弦相似度
         sim_to_tgt = F.cosine_similarity(local_feat, tgt_local, dim=-1)  # [B, N]
         num_patches = sim_to_tgt.shape[-1]
