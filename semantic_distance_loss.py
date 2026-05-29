@@ -86,31 +86,36 @@ class SemanticDistanceLoss(nn.Module):
                 new_tgt_local[li][model_idx] = all_local[li].squeeze(0)
 
         # 第一次调用：存源图特征 + 计算初始 dist
-        if src_image is not None and self.dist_ema is None:
-            src_global = []
-            src_local = []
-            for model_idx, model in enumerate(self.extractors):
-                _, ag, al = model.intermediate_features(src_image.to(src_image.device))
-                num_layers_src = len(ag)
-                while len(src_global) < num_layers_src:
-                    src_global.append({})
-                    src_local.append({})
-                for li in range(num_layers_src):
-                    src_global[li][model_idx] = ag[li].squeeze(0)
-                    src_local[li][model_idx] = al[li].squeeze(0)
+        # 兼容两种情况：显式传 src_image，或第一次调用时 src=None（自动用 tgt 自初始化）
+        if self.dist_ema is None:
+            if src_image is not None:
+                src_global = []
+                src_local = []
+                for model_idx, model in enumerate(self.extractors):
+                    _, ag, al = model.intermediate_features(src_image.to(src_image.device))
+                    num_layers_src = len(ag)
+                    while len(src_global) < num_layers_src:
+                        src_global.append({})
+                        src_local.append({})
+                    for li in range(num_layers_src):
+                        src_global[li][model_idx] = ag[li].squeeze(0)
+                        src_local[li][model_idx] = al[li].squeeze(0)
+                self.src_local_per_layer = src_local
+            else:
+                # 未提供 src_image 时，用 tgt 自身的特征做自初始化（dist=0）
+                self.src_local_per_layer = new_tgt_local
 
-            self.src_local_per_layer = src_local
             self.gt_global_per_layer = new_tgt_global
             self.gt_local_per_layer = new_tgt_local
 
             # 初始化 EMA 列表（每层一个初始 dist）
-            num_layers = len(src_local)
+            num_layers = len(new_tgt_local)
             dist_init = []
             for li in range(num_layers):
                 sim_list = []
-                for model_idx in src_local[li]:
+                for model_idx in new_tgt_local[li]:
                     src_p = self.src_local_per_layer[li][model_idx].unsqueeze(0)
-                    tgt_p = self.gt_local_per_layer[li][model_idx].unsqueeze(0)
+                    tgt_p = new_tgt_local[li][model_idx].unsqueeze(0)
                     sim = F.cosine_similarity(src_p, tgt_p, dim=-1)
                     sim_list.append(sim.mean().item())
                 dist_init.append(1.0 - np.mean(sim_list))
