@@ -375,7 +375,7 @@ def fgsm_attack(
             if cfg.model.use_source_crop:
                 local_cropped = source_crop(adv_image)
                 local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-                if local_features_raw.abs().sum() > 0:
+                if local_features_raw and sum(v.abs().sum() for v in local_features_raw.values()) > 0:
                     local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
                     loss = local_sim
                     metrics["local_similarity"] = local_sim.item()
@@ -450,7 +450,7 @@ def mifgsm_attack(
             if cfg.model.use_source_crop:
                 local_cropped = source_crop(adv_image)
                 local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-                if local_features_raw.abs().sum() > 0:
+                if local_features_raw and sum(v.abs().sum() for v in local_features_raw.values()) > 0:
                     local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
                     loss = local_sim
                     metrics["local_similarity"] = local_sim.item()
@@ -526,7 +526,7 @@ def pgd_attack(
             if cfg.model.use_source_crop:
                 local_cropped = source_crop(adv_image)
                 local_features, local_features_local, local_features_raw = ensemble_extractor(local_cropped)
-                if local_features_raw.abs().sum() > 0:
+                if local_features_raw and sum(v.abs().sum() for v in local_features_raw.values()) > 0:
                     local_sim = saliency_loss(local_features, local_features_raw, total_steps=total_steps)
                     loss = local_sim
                     metrics["local_similarity"] = local_sim.item()
