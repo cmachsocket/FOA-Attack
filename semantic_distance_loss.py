@@ -146,7 +146,7 @@ class SemanticDistanceLoss(nn.Module):
         k = max(1, int(num_patches * self.saliency_ratio))
 
         # Top-K 按 patch 与目标的余弦相似度降序排列
-        _, topk_idx = torch.topk(sim_to_tgt, k=k, dim=-1, largest=True)  # [B, k]
+        _, topk_idx = torch.topk(sim_to_tgt, k=k, dim=-1, largest=False)  # [B, k]
 
         mask = torch.zeros(sim_to_tgt.shape, dtype=torch.float32, device=sim_to_tgt.device)
         mask.scatter_(1, topk_idx.long(), 1.0)
