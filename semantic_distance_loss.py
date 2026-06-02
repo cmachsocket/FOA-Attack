@@ -55,6 +55,9 @@ class SemanticDistanceLoss(nn.Module):
         # EMA 平滑后的每层 dist（每步更新）
         self.dist_ema = None   # list of float
 
+        # 当前步的平均 alpha（用于日志）
+        self._last_avg_alpha = self.base_alpha
+
         # 初始化时的静态 dist（仅用于日志/调试）
         self.layer_dist_init = None
 
@@ -222,6 +225,10 @@ class SemanticDistanceLoss(nn.Module):
         loss_global_total = loss_global_total / num_active
         loss_local_total = loss_local_total / num_active
         total_loss = loss_global_total + self.local_weight * loss_local_total
+
+        # 记录当前步的平均 alpha（用于日志输出）
+        self._last_avg_alpha = np.mean([self._sigmoid_alpha(d) for d in self.dist_ema]) if self.dist_ema else self.base_alpha
+
         return total_loss
 
     def get_layer_alphas(self) -> List[float]:

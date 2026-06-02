@@ -344,10 +344,7 @@ def fgsm_attack(
 
     for epoch in pbar:
         with torch.no_grad():
-            if saliency_version == "semantic_distance":
-                saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
-            else:
-                saliency_loss.set_ground_truth(target_crop(image_tgt))
+            saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
 
         adv_image = image_org + delta
 
@@ -388,6 +385,9 @@ def fgsm_attack(
             else:
                 loss = global_sim
 
+        if saliency_version == "semantic_distance":
+            metrics["avg_alpha"] = saliency_loss._last_avg_alpha
+
         log_metrics(pbar, metrics, img_index, epoch)
 
         grad = torch.autograd.grad(loss, delta, create_graph=False)[0]
@@ -423,10 +423,7 @@ def mifgsm_attack(
 
     for epoch in pbar:
         with torch.no_grad():
-            if saliency_version == "semantic_distance":
-                saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
-            else:
-                saliency_loss.set_ground_truth(target_crop(image_tgt))
+            saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
 
         adv_image = image_org + delta
 
@@ -465,6 +462,9 @@ def mifgsm_attack(
                     metrics["local_similarity"] = float("nan")
             else:
                 loss = global_sim
+
+        if saliency_version == "semantic_distance":
+            metrics["avg_alpha"] = saliency_loss._last_avg_alpha
 
         log_metrics(pbar, metrics, img_index, epoch)
 
@@ -502,10 +502,7 @@ def pgd_attack(
 
     for epoch in pbar:
         with torch.no_grad():
-            if saliency_version == "semantic_distance":
-                saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
-            else:
-                saliency_loss.set_ground_truth(target_crop(image_tgt))
+            saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
 
         adv_image = image_org + delta
 
@@ -544,6 +541,9 @@ def pgd_attack(
                     metrics["local_similarity"] = float("nan")
             else:
                 loss = global_sim
+
+        if saliency_version == "semantic_distance":
+            metrics["avg_alpha"] = saliency_loss._last_avg_alpha
 
         log_metrics(pbar, metrics, img_index, epoch)
 

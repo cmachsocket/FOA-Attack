@@ -36,35 +36,35 @@ class SaliencySuppressionReconstructionLoss(nn.Module):
         self.step_count = 0
     
     @torch.no_grad()
-    def set_ground_truth(self, x: torch.Tensor):
-        """设置目标图像的特征"""
+    def set_ground_truth(self, tgt: torch.Tensor, src: torch.Tensor = None):
+        """设置目标图像的特征，src 参数仅兼容接口，实际不使用"""
         self.ground_truth.clear()
         self.ground_truth_local.clear()
         for model in self.extractors:
-            x_tensor, x_embedding = model.global_local_features(x.to(x.device))
-            self.ground_truth.append(x_tensor.squeeze(0))
-            # 存储原始 patch embeddings（不聚类），用于 saliency loss
-            self.ground_truth_local.append(x_embedding.squeeze(0))  # [N_patches, D]
+            tgt_tensor, tgt_embedding = model.global_local_features(tgt.to(tgt.device))
+            self.ground_truth.append(tgt_tensor.squeeze(0))
+            self.ground_truth_local.append(tgt_embedding.squeeze(0))  # [N_patches, D]
     
-    def compute_saliency_mask(self, features: torch.Tensor) -> torch.Tensor:
+    def compute_saliency_mask(self, local_feat: torch.Tensor, tgt_local: torch.Tensor) -> torch.Tensor:
         """
-        计算显著性 mask
+        基于当前 adv patch 与目标 patch 的余弦相似度计算显著性 mask
+        选最不相似的 patch（largest=False），即距离目标最远的区域优先抑制
         
         Args:
-            features: [N, D] local features (N = num patches)
+            local_feat: [N, D] 当前对抗图的 patch features
+            tgt_local: [N, D] 目标图的 patch features
         Returns:
-            mask: [N] 1.0 for high saliency, 0.0 for others
+            mask: [N] 1.0 for high saliency (most different from target), 0.0 for others
         """
-        # 基于特征范数作为显著性指标
-        feat_norm = torch.norm(features, dim=-1)  # [N]
+        # 计算每个 patch 与目标 patch 的余弦相似度
+        sim_to_tgt = F.cosine_similarity(local_feat, tgt_local, dim=-1)  # [N]
+        # 相似度越低 = 离目标越远 = 越需要抑制
+        k = int(local_feat.shape[0] * self.saliency_ratio)
+        k = max(1, k)
         
-        # 取 top-k 高显著性的 patch
-        k = int(features.shape[0] * self.saliency_ratio)
-        k = max(1, k)  # 至少选1个
+        _, topk_idx = torch.topk(sim_to_tgt, k=k, dim=-1, largest=False)
         
-        _, topk_idx = torch.topk(feat_norm, k=k, dim=-1)
-        
-        mask = torch.zeros_like(feat_norm)
+        mask = torch.zeros_like(sim_to_tgt)
         mask.scatter_(0, topk_idx, 1.0)
         
         return mask
@@ -123,8 +123,8 @@ class SaliencySuppressionReconstructionLoss(nn.Module):
             feat_loss = torch.sum(feature * gt, dim=-1).mean()
             
             # ========== 局部损失（显著性抑制 + 重建）==========
-            # 计算源图像的显著性 mask
-            saliency_mask = self.compute_saliency_mask(local_feat)  # [N]
+            # 使用当前 adv patch vs 目标 patch 的相似度计算显著性 mask
+            saliency_mask = self.compute_saliency_mask(local_feat, gt_local)  # [N]
             
             # 抑制高显著性区域 + 用目标对应位置重建
             # src' = src * (1 - alpha * mask) + tgt * (alpha * mask)
@@ -175,48 +175,26 @@ class SaliencySuppressionReconstructionLossV2(nn.Module):
         self.step_count = 0
     
     @torch.no_grad()
-    def set_ground_truth(self, x: torch.Tensor):
+    def set_ground_truth(self, tgt: torch.Tensor, src: torch.Tensor = None):
+        """设置目标图像的特征，src 参数仅兼容接口"""
         self.ground_truth.clear()
         self.ground_truth_local.clear()
         for model in self.extractors:
-            x_tensor, x_embedding = model.global_local_features(x.to(x.device))
-            self.ground_truth.append(x_tensor.squeeze(0))
-            # 存储原始 patch embeddings（不聚类）
-            self.ground_truth_local.append(x_embedding.squeeze(0))
+            tgt_tensor, tgt_embedding = model.global_local_features(tgt.to(tgt.device))
+            self.ground_truth.append(tgt_tensor.squeeze(0))
+            self.ground_truth_local.append(tgt_embedding.squeeze(0))
     
-    def compute_attention_saliency(self, local_feat: torch.Tensor) -> torch.Tensor:
+    def compute_saliency_mask(self, local_feat: torch.Tensor, tgt_local: torch.Tensor) -> torch.Tensor:
         """
-        基于注意力机制计算显著性
-        
-        使用 query-key 相似度作为注意力权重
+        基于当前 adv patch 与目标 patch 的余弦相似度计算显著性 mask
+        选最不相似的 patch（largest=False），即距离目标最远的区域优先抑制
         """
-        # 使用均值池化作为 query
-        query = local_feat.mean(dim=0, keepdim=True)  # [1, D]
-        
-        # 计算每个 patch 与 query 的相似度
-        attn_scores = torch.sum(local_feat * query, dim=-1)  # [N]
-        
-        return attn_scores
-    
-    def compute_saliency_mask(self, features: torch.Tensor) -> torch.Tensor:
-        """组合范数和注意力计算显著性"""
-        # 范数显著性
-        norm_saliency = torch.norm(features, dim=-1)
-        norm_saliency = (norm_saliency - norm_saliency.min()) / (norm_saliency.max() - norm_saliency.min() + 1e-8)
-        
-        # 注意力显著性
-        attn_saliency = self.compute_attention_saliency(features)
-        attn_saliency = (attn_saliency - attn_saliency.min()) / (attn_saliency.max() - attn_saliency.min() + 1e-8)
-        
-        # 组合
-        combined_saliency = 0.5 * norm_saliency + 0.5 * attn_saliency
-        
-        # 取 top-k
-        k = int(features.shape[0] * self.saliency_ratio)
+        sim_to_tgt = F.cosine_similarity(local_feat, tgt_local, dim=-1)  # [N]
+        k = int(local_feat.shape[0] * self.saliency_ratio)
         k = max(1, k)
-        _, topk_idx = torch.topk(combined_saliency, k=k, dim=-1)
+        _, topk_idx = torch.topk(sim_to_tgt, k=k, dim=-1, largest=False)
         
-        mask = torch.zeros_like(combined_saliency)
+        mask = torch.zeros_like(sim_to_tgt)
         mask.scatter_(0, topk_idx, 1.0)
         
         return mask
@@ -246,8 +224,8 @@ class SaliencySuppressionReconstructionLossV2(nn.Module):
             # 全局损失
             feat_loss = torch.sum(feature * gt, dim=-1).mean()
             
-            # 显著性 mask
-            saliency_mask = self.compute_saliency_mask(local_feat)
+            # 显著性 mask（使用当前 adv patch 计算）
+            saliency_mask = self.compute_saliency_mask(local_feat, gt_local)
             
             # 抑制 + 重建
             reconstructed = local_feat * (1 - alpha * saliency_mask.unsqueeze(-1)) \
@@ -296,37 +274,40 @@ class SaliencySuppressionReconstructionLossV3(nn.Module):
         self.step_count = 0
     
     @torch.no_grad()
-    def set_ground_truth(self, x: torch.Tensor):
+    def set_ground_truth(self, tgt: torch.Tensor, src: torch.Tensor = None):
+        """设置目标图像的特征，src 参数仅兼容接口"""
         self.ground_truth.clear()
         self.ground_truth_local.clear()
         for model in self.extractors:
-            x_tensor, x_embedding = model.global_local_features(x.to(x.device))
-            self.ground_truth.append(x_tensor.squeeze(0))
-            # 存储原始 patch embeddings（不聚类）
-            self.ground_truth_local.append(x_embedding.squeeze(0))
+            tgt_tensor, tgt_embedding = model.global_local_features(tgt.to(tgt.device))
+            self.ground_truth.append(tgt_tensor.squeeze(0))
+            self.ground_truth_local.append(tgt_embedding.squeeze(0))
     
-    def compute_multi_level_saliency_mask(self, features: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """计算多层级显著性 mask"""
-        feat_norm = torch.norm(features, dim=-1)
+    def compute_multi_level_saliency_mask(self, local_feat: torch.Tensor, tgt_local: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        基于与目标 patch 的余弦相似度计算多层级显著性 mask
+        相似度越低 = 离目标越远 = 优先级越高
+        """
+        sim_to_tgt = F.cosine_similarity(local_feat, tgt_local, dim=-1)  # [N]
+        n = local_feat.shape[0]
         
-        # 排序获取阈值
-        sorted_norm, _ = torch.sort(feat_norm, descending=True)
-        n = features.shape[0]
+        # 按相似度升序排序（最不像目标的排前面）
+        sorted_sim, sorted_idx = torch.sort(sim_to_tgt, descending=False)
         
         high_k = int(n * self.high_ratio)
         mid_k = int(n * (self.high_ratio + self.mid_ratio))
         
-        # 多层级 mask
-        high_mask = torch.zeros_like(feat_norm)
-        mid_mask = torch.zeros_like(feat_norm)
-        low_mask = torch.zeros_like(feat_norm)
+        # 多层级 mask（基于排序索引）
+        high_mask = torch.zeros_like(sim_to_tgt)
+        mid_mask = torch.zeros_like(sim_to_tgt)
+        low_mask = torch.zeros_like(sim_to_tgt)
         
         if high_k > 0:
-            high_mask[:high_k] = 1.0
+            high_mask[sorted_idx[:high_k]] = 1.0
         if mid_k > high_k:
-            mid_mask[high_k:mid_k] = 1.0
+            mid_mask[sorted_idx[high_k:mid_k]] = 1.0
         if mid_k < n:
-            low_mask[mid_k:] = 1.0
+            low_mask[sorted_idx[mid_k:]] = 1.0
         
         return {"high": high_mask, "mid": mid_mask, "low": low_mask}
     
@@ -363,8 +344,8 @@ class SaliencySuppressionReconstructionLossV3(nn.Module):
             # 全局损失
             feat_loss = torch.sum(feature * gt, dim=-1).mean()
             
-            # 多层级显著性 mask
-            masks = self.compute_multi_level_saliency_mask(local_feat)
+            # 多层级显著性 mask（使用当前 adv patch 计算）
+            masks = self.compute_multi_level_saliency_mask(local_feat, gt_local)
             
             # 分层抑制 + 重建
             reconstructed = local_feat.clone()
