@@ -261,16 +261,18 @@ class SaliencySuppressionReconstructionLossV3(nn.Module):
     def __init__(self, extractors: List[nn.Module], 
                  high_ratio: float = 0.1, 
                  mid_ratio: float = 0.2,
-                 high_alpha: float = 0.9,
-                 mid_alpha: float = 0.5):
+                 high_alpha: float = 1.2,
+                 mid_alpha: float = 1.0,
+                 low_alpha: float = 0.5):
         super(SaliencySuppressionReconstructionLossV3, self).__init__()
         self.extractors = nn.ModuleList(extractors)
         self.ground_truth = []
         self.ground_truth_local = []
         self.high_ratio = high_ratio      # top 10%
         self.mid_ratio = mid_ratio         # 10%-30%
-        self.high_alpha = high_alpha       # 强抑制
-        self.mid_alpha = mid_alpha         # 中等抑制
+        self.high_alpha = high_alpha       # 高显著倍率（× base_alpha）
+        self.mid_alpha = mid_alpha         # 中显著倍率（× base_alpha）
+        self.low_alpha = low_alpha         # 低显著倍率（× base_alpha）
         self.step_count = 0
     
     @torch.no_grad()
@@ -312,16 +314,16 @@ class SaliencySuppressionReconstructionLossV3(nn.Module):
         return {"high": high_mask, "mid": mid_mask, "low": low_mask}
     
     def get_alpha_schedule(self) -> Dict[str, float]:
-        """渐进式 alpha 调度"""
+        """渐进式 alpha 调度：各层 = base_alpha × 该层倍率"""
         progress = min(self.step_count / 300, 1.0)
         
-        # 不同层级的 alpha 都递增，但速度不同
+        # base_alpha 按 step 走 cosine 曲线从 0.1 递增到 1.0
         base_alpha = 0.1 + 0.9 * (1 - np.cos(np.pi * progress)) / 2
         
         return {
-            "high": min(base_alpha * 1.2, 1.0),
-            "mid": base_alpha,
-            "low": base_alpha * 0.5
+            "high": min(base_alpha * self.high_alpha, 1.0),
+            "mid": min(base_alpha * self.mid_alpha, 1.0),
+            "low": min(base_alpha * self.low_alpha, 1.0)
         }
     
     def forward(self, feature_dict: Dict[int, torch.Tensor], 
