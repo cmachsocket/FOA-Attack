@@ -344,7 +344,7 @@ def fgsm_attack(
 
     for epoch in pbar:
         with torch.no_grad():
-            saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
+            saliency_loss.set_ground_truth(target_crop(image_tgt), src=image_org)
 
         adv_image = image_org + delta
 
@@ -423,7 +423,7 @@ def mifgsm_attack(
 
     for epoch in pbar:
         with torch.no_grad():
-            saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
+            saliency_loss.set_ground_truth(target_crop(image_tgt), src=image_org)
 
         adv_image = image_org + delta
 
@@ -502,7 +502,7 @@ def pgd_attack(
 
     for epoch in pbar:
         with torch.no_grad():
-            saliency_loss.set_ground_truth(target_crop(image_tgt), src_image=image_org)
+            saliency_loss.set_ground_truth(target_crop(image_tgt), src=image_org)
 
         adv_image = image_org + delta
 
