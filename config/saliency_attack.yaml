@@ -24,12 +24,25 @@ model:
   
   # ========== Saliency Attack 专用参数 ==========
   
-  # 显著性损失版本: v1 (基础), v2 (注意力), v3 (多层),
-  #   semantic_distance (语义距离自适应 alpha)
+  # 显著性损失版本: v1 (基础), v2 (注意力), v3 (多层抑制),
+  #   semantic_distance (语义距离自适应 alpha), v4a (PCA子空间抑制+加法重建)
   saliency_loss_version: semantic_distance
   
-  # 显著性比例：抑制前 X% 高显著区域
-  saliency_ratio: 0.3
+  # 显著性比例：抑制前 X% 高显著区域（仅 v1/v2/semantic_distance 使用）
+  saliency_ratio: 1
+  
+  # ========== v3 / v4a 多层级 mask 参数 ==========
+  # top X% 为高显著（high），下一个 X% 为中显著（mid），其余为低显著（low）
+  high_ratio: 0.1      # top 10% 为高显著
+  mid_ratio: 0.2       # 10%-30% 为中显著（按累加值理解）
+  high_alpha: 1.2      # 高显著 loss 权重倍数
+  mid_alpha: 1.0       # 中显著 loss 权重倍数
+  low_alpha: 0.5       # 低显著 loss 权重倍数
+  
+  # ========== v4a 独有参数（PCA子空间抑制+加法重建）==========
+  pca_k: 64            # PCA 保留维度（surrogate 判别子空间维度）
+  suppress_scale: 1.0  # 抑制强度（src 沿 PCA 子空间减弱的倍数）
+  reconstruct_scale: 1.0  # 重建强度（tgt 沿 PCA 子空间加强的倍数）
 
   
   # 语义距离加权的 base alpha（仅 semantic_distance 版本使用）

@@ -247,7 +247,6 @@ class SaliencySuppressionReconstructionLossV2(nn.Module):
 
         return total
 
-
 class SaliencySuppressionReconstructionLossV3(nn.Module):
     """
     进阶版：多层渐进抑制
@@ -373,4 +372,195 @@ class SaliencySuppressionReconstructionLossV3(nn.Module):
         if not isinstance(total, torch.Tensor):
             total = torch.tensor(total, dtype=torch.float32, device=(loss_global.device if isinstance(loss_global, torch.Tensor) else None))
 
+        return total
+
+
+class SaliencySuppressionReconstructionLossV4A(nn.Module):
+    """
+    V4A: 方向 ① — 抑制+加法重建（区别于 V1-V3 的 blend 和 PRAF 的替换）
+
+    核心思路：
+    - 在 tgt patch features 的 PCA 子空间 A 里做"减+加"两步
+    - 抑制 = 把 src 沿 A 的分量减弱（避免扰动太显眼）
+    - 重建 = 把 tgt 沿 A 的分量加到 suppressed 上（让 surrogate 看到 tgt）
+    - A 之外的分量 src 完全保留（视觉连续性比 PRAF 好）
+
+    公式：
+        A = PCA_top_k(tgt_local)  # [D, k]
+        src_in_A = src @ A @ A.T  # [N, D]，src 沿 A 的分量
+        tgt_in_A = tgt @ A @ A.T  # [N, D]，tgt 沿 A 的分量
+        intensity = w_high*mask_high + w_mid*mask_mid + w_low*mask_low  # [N]
+        suppressed = src - alpha * intensity.unsqueeze(-1) * src_in_A
+        recon = suppressed + beta * intensity.unsqueeze(-1) * tgt_in_A
+
+    跟 V1-V3 (blend) 和 PRAF (replace) 的根本差异：
+    - 不是"src↔tgt 整体插值/替换"
+    - 而是"沿 surrogate 判别子空间的方向性修改"
+    - 抑制和重建都集中在 A 子空间
+    - A 之外 src 不被修改（保留 src 骨架信息）
+    """
+    
+    def __init__(self, extractors: List[nn.Module],
+                 high_ratio: float = 0.1,
+                 mid_ratio: float = 0.2,
+                 high_alpha: float = 1.2,
+                 mid_alpha: float = 1.0,
+                 low_alpha: float = 0.5,
+                 pca_k: int = 64,
+                 suppress_scale: float = 1.0,
+                 reconstruct_scale: float = 1.0):
+        super(SaliencySuppressionReconstructionLossV4A, self).__init__()
+        self.extractors = nn.ModuleList(extractors)
+        self.ground_truth = []
+        self.ground_truth_local = []
+        self.pca_basis = []  # 每个 surrogate 一份 PCA 基底 [D, pca_k]
+        self.high_ratio = high_ratio      # top 10%
+        self.mid_ratio = mid_ratio         # 10%-30%
+        self.high_alpha = high_alpha
+        self.mid_alpha = mid_alpha
+        self.low_alpha = low_alpha
+        self.pca_k = pca_k                 # PCA 保留维度
+        self.suppress_scale = suppress_scale     # 抑制强度
+        self.reconstruct_scale = reconstruct_scale # 重建强度
+        self.step_count = 0
+    
+    @torch.no_grad()
+    def set_ground_truth(self, tgt: torch.Tensor, src: torch.Tensor = None):
+        """
+        设置目标图像的特征，并计算 tgt patch features 的 PCA 基底
+        跟 V3 不同的点：多算一个 pca_basis
+        """
+        self.ground_truth.clear()
+        self.ground_truth_local.clear()
+        self.pca_basis.clear()
+        
+        for model in self.extractors:
+            tgt_tensor, tgt_embedding = model.global_local_features(tgt.to(tgt.device))
+            self.ground_truth.append(tgt_tensor.squeeze(0))
+            tgt_local = tgt_embedding.squeeze(0)  # [N, D]
+            self.ground_truth_local.append(tgt_local)
+            # 算 tgt 的 PCA top-k 基底
+            self.pca_basis.append(self._compute_pca_basis(tgt_local))
+    
+    def _compute_pca_basis(self, tgt_local: torch.Tensor) -> torch.Tensor:
+        """
+        对 [N, D] tgt features 做 SVD，取 top-k 右奇异向量作为基底
+        返回 [D, k]，k = min(pca_k, D, N)
+        """
+        N, D = tgt_local.shape
+        k = min(self.pca_k, D, N)
+        # 中心化
+        mean = tgt_local.mean(dim=0, keepdim=True)
+        centered = tgt_local - mean
+        # SVD: [N, D] = U @ diag(S) @ Vh
+        # Vh: [min(N,D), D]
+        U, S, Vh = torch.linalg.svd(centered, full_matrices=False)
+        # 取 top-k 右奇异向量，转置为 [D, k]
+        return Vh[:k, :].T.contiguous()  # [D, k]
+    
+    def project_along_basis(self, x: torch.Tensor, basis: torch.Tensor) -> torch.Tensor:
+        """
+        把 x 沿 basis 张成的子空间投影，返回投影分量
+        x: [N, D], basis: [D, k]
+        返回: [N, D]，即 x 沿 basis 子空间的分量
+        """
+        coeff = x @ basis  # [N, k]
+        return coeff @ basis.T  # [N, D]
+    
+    def compute_multi_level_saliency_mask(self, local_feat: torch.Tensor, tgt_local: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        跟 V3 一样的多层级 mask（基于与目标 patch 的余弦相似度）
+        """
+        sim_to_tgt = F.cosine_similarity(local_feat, tgt_local, dim=-1)  # [N]
+        n = local_feat.shape[0]
+        
+        sorted_sim, sorted_idx = torch.sort(sim_to_tgt, descending=False)
+        
+        high_k = int(n * self.high_ratio)
+        mid_k = int(n * (self.high_ratio + self.mid_ratio))
+        
+        high_mask = torch.zeros_like(sim_to_tgt)
+        mid_mask = torch.zeros_like(sim_to_tgt)
+        low_mask = torch.zeros_like(sim_to_tgt)
+        
+        if high_k > 0:
+            high_mask[sorted_idx[:high_k]] = 1.0
+        if mid_k > high_k:
+            mid_mask[sorted_idx[high_k:mid_k]] = 1.0
+        if mid_k < n:
+            low_mask[sorted_idx[mid_k:]] = 1.0
+        
+        return {"high": high_mask, "mid": mid_mask, "low": low_mask}
+    
+    def get_loss_weights(self) -> Dict[str, float]:
+        """跟 V4A 原版一样的多层级权重调度（cosine ramp）"""
+        progress = min(self.step_count / 300, 1.0)
+        base_weight = 0.1 + 0.9 * (1 - np.cos(np.pi * progress)) / 2
+        return {
+            "high": base_weight * self.high_alpha,
+            "mid": base_weight * self.mid_alpha,
+            "low": base_weight * self.low_alpha,
+        }
+    
+    def forward(self, feature_dict: Dict[int, torch.Tensor],
+               feature_local_dict: Dict[int, torch.Tensor],
+               total_steps: int = 300,
+               y: any = None) -> torch.Tensor:
+        self.step_count += 1
+        weights = self.get_loss_weights()
+        
+        loss_global = 0
+        loss_local = 0
+        
+        for index, model in enumerate(self.extractors):
+            gt = self.ground_truth[index]
+            gt_local = self.ground_truth_local[index]
+            basis = self.pca_basis[index]  # [D, pca_k]
+            
+            feature = feature_dict[index].unsqueeze(0)
+            local_feat = feature_local_dict[index]  # [N, D]，当前 adv patch features
+            
+            # 全局损失
+            feat_loss = torch.sum(feature * gt, dim=-1).mean()
+            
+            # 多层级显著性 mask
+            masks = self.compute_multi_level_saliency_mask(local_feat, gt_local)
+            
+            # 合成 patch 级强度系数（每 patch 一个 intensity ∈ [0, max_weight]）
+            intensity = (
+                weights["high"] * masks["high"] +
+                weights["mid"] * masks["mid"] +
+                weights["low"] * masks["low"]
+            )  # [N]
+            intensity = intensity.unsqueeze(-1)  # [N, 1]
+            
+            # 沿 PCA 子空间投影
+            src_in_A = self.project_along_basis(local_feat, basis)  # adv 沿 A 的分量
+            tgt_in_A = self.project_along_basis(gt_local, basis)    # tgt 沿 A 的分量
+            
+            # 抑制：src 沿 A 的分量减弱 α 倍
+            suppressed = local_feat - self.suppress_scale * intensity * src_in_A
+            
+            # 重建：在 suppressed 基础上加 tgt 沿 A 的分量
+            recon = suppressed + self.reconstruct_scale * intensity * tgt_in_A
+            
+            # Loss: cos(recon, tgt_local) on selected patches
+            sim = F.cosine_similarity(recon, gt_local, dim=-1)  # [N]
+            per_patch_loss = 1.0 - sim  # [N]
+            
+            # 多层级加权（用 intensity 当 mask 权重，更直接）
+            weighted_loss = intensity.squeeze(-1) * per_patch_loss
+            
+            local_loss = weighted_loss.mean()
+            
+            loss_global += feat_loss
+            loss_local += local_loss
+        
+        loss_global /= len(self.extractors)
+        loss_local /= len(self.extractors)
+        
+        total = loss_global + 0.2 * loss_local
+        if not isinstance(total, torch.Tensor):
+            total = torch.tensor(total, dtype=torch.float32, device=(loss_global.device if isinstance(loss_global, torch.Tensor) else None))
+        
         return total
