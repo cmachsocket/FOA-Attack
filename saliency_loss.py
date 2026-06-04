@@ -564,3 +564,164 @@ class SaliencySuppressionReconstructionLossV4A(nn.Module):
             total = torch.tensor(total, dtype=torch.float32, device=(loss_global.device if isinstance(loss_global, torch.Tensor) else None))
         
         return total
+
+
+class SaliencySuppressionReconstructionLossV4B(nn.Module):
+    """
+    V4B: 两步解耦 — 全局抑制 + 硬重建
+
+    核心思路（与 V4A 的本质差异）：
+    - Step 1：全局均匀抑制，对所有 patch 统一削弱 PCA 子空间分量（去除背景干扰）
+    - Step 2：硬重建，对高显著区域直接用 tgt patch 替换，不做加法
+
+    公式：
+        A = PCA_top_k(tgt_local)
+        suppressed = src - suppress_scale * src_in_A          # 均匀抑制
+        recon = suppressed; recon[high] = tgt[high]           # 硬替换
+
+    跟 V4A 的差异：
+    - V4A：抑制和重建都用 intensity 加权 → 软融合（信号互相抵消）
+    - V4B：抑制全局均匀 + 重建硬替换 → 更接近 PRAF 的效果
+    """
+
+    def __init__(self, extractors: List[nn.Module],
+                 high_ratio: float = 0.1,
+                 mid_ratio: float = 0.2,
+                 high_alpha: float = 1.2,
+                 mid_alpha: float = 1.0,
+                 low_alpha: float = 0.5,
+                 pca_k: int = 64,
+                 suppress_scale: float = 1.0):
+        super(SaliencySuppressionReconstructionLossV4B, self).__init__()
+        self.extractors = nn.ModuleList(extractors)
+        self.ground_truth = []
+        self.ground_truth_local = []
+        self.pca_basis = []  # 每个 surrogate 一份 PCA 基底 [D, pca_k]
+        self.high_ratio = high_ratio
+        self.mid_ratio = mid_ratio
+        self.high_alpha = high_alpha
+        self.mid_alpha = mid_alpha
+        self.low_alpha = low_alpha
+        self.pca_k = pca_k
+        self.suppress_scale = suppress_scale
+        self.step_count = 0
+
+    @torch.no_grad()
+    def set_ground_truth(self, tgt: torch.Tensor, src: torch.Tensor = None):
+        """设置目标图像的特征，并计算 tgt patch features 的 PCA 基底"""
+        self.ground_truth.clear()
+        self.ground_truth_local.clear()
+        self.pca_basis.clear()
+
+        for model in self.extractors:
+            tgt_tensor, tgt_embedding = model.global_local_features(tgt.to(tgt.device))
+            self.ground_truth.append(tgt_tensor.squeeze(0))
+            tgt_local = tgt_embedding.squeeze(0)  # [N, D]
+            self.ground_truth_local.append(tgt_local)
+            self.pca_basis.append(self._compute_pca_basis(tgt_local))
+
+    def _compute_pca_basis(self, tgt_local: torch.Tensor) -> torch.Tensor:
+        """对 [N, D] tgt features 做 SVD，取 top-k 右奇异向量作为基底"""
+        N, D = tgt_local.shape
+        k = min(self.pca_k, D, N)
+        mean = tgt_local.mean(dim=0, keepdim=True)
+        centered = tgt_local - mean
+        U, S, Vh = torch.linalg.svd(centered, full_matrices=False)
+        return Vh[:k, :].T.contiguous()  # [D, k]
+
+    def project_along_basis(self, x: torch.Tensor, basis: torch.Tensor) -> torch.Tensor:
+        """把 x 沿 basis 张成的子空间投影，返回投影分量"""
+        coeff = x @ basis  # [N, k]
+        return coeff @ basis.T  # [N, D]
+
+    def compute_multi_level_saliency_mask(self, local_feat: torch.Tensor, tgt_local: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """基于与目标 patch 的余弦相似度计算多层级显著性 mask"""
+        sim_to_tgt = F.cosine_similarity(local_feat, tgt_local, dim=-1)  # [N]
+        n = local_feat.shape[0]
+
+        sorted_sim, sorted_idx = torch.sort(sim_to_tgt, descending=False)
+
+        high_k = int(n * self.high_ratio)
+        mid_k = int(n * (self.high_ratio + self.mid_ratio))
+
+        high_mask = torch.zeros_like(sim_to_tgt)
+        mid_mask = torch.zeros_like(sim_to_tgt)
+        low_mask = torch.zeros_like(sim_to_tgt)
+
+        if high_k > 0:
+            high_mask[sorted_idx[:high_k]] = 1.0
+        if mid_k > high_k:
+            mid_mask[sorted_idx[high_k:mid_k]] = 1.0
+        if mid_k < n:
+            low_mask[sorted_idx[mid_k:]] = 1.0
+
+        return {"high": high_mask, "mid": mid_mask, "low": low_mask}
+
+    def get_loss_weights(self) -> Dict[str, float]:
+        """多层级权重调度（cosine ramp）"""
+        progress = min(self.step_count / 300, 1.0)
+        base_weight = 0.1 + 0.9 * (1 - np.cos(np.pi * progress)) / 2
+        return {
+            "high": base_weight * self.high_alpha,
+            "mid": base_weight * self.mid_alpha,
+            "low": base_weight * self.low_alpha,
+        }
+
+    def forward(self, feature_dict: Dict[int, torch.Tensor],
+                feature_local_dict: Dict[int, torch.Tensor],
+                total_steps: int = 300,
+                y: any = None) -> torch.Tensor:
+        self.step_count += 1
+        weights = self.get_loss_weights()
+
+        loss_global = 0
+        loss_local = 0
+
+        for index, model in enumerate(self.extractors):
+            gt = self.ground_truth[index]
+            gt_local = self.ground_truth_local[index]
+            basis = self.pca_basis[index]  # [D, pca_k]
+
+            feature = feature_dict[index].unsqueeze(0)
+            local_feat = feature_local_dict[index]  # [N, D]
+
+            # 全局损失
+            feat_loss = torch.sum(feature * gt, dim=-1).mean()
+
+            # 多层级显著性 mask（用当前 adv patch 计算）
+            masks = self.compute_multi_level_saliency_mask(local_feat, gt_local)
+
+            # ========== Step 1: 全局均匀抑制 ==========
+            src_in_A = self.project_along_basis(local_feat, basis)  # adv 沿 A 的分量
+            suppressed = local_feat - self.suppress_scale * src_in_A  # 均匀削弱
+
+            # ========== Step 2: 硬重建 ==========
+            recon = suppressed.clone()
+            # 对高显著区域，直接用 tgt patch 替换
+            high_mask = masks["high"].unsqueeze(-1)  # [N, 1]
+            recon = torch.where(high_mask.bool(), gt_local, recon)
+
+            # Loss: cos(recon, tgt_local)
+            sim = F.cosine_similarity(recon, gt_local, dim=-1)  # [N]
+            per_patch_loss = 1.0 - sim  # [N]
+
+            # 多层级加权
+            weighted_loss = (
+                weights["high"] * masks["high"] +
+                weights["mid"] * masks["mid"] +
+                weights["low"] * masks["low"]
+            ) * per_patch_loss  # [N]
+
+            local_loss = weighted_loss.mean()
+
+            loss_global += feat_loss
+            loss_local += local_loss
+
+        loss_global /= len(self.extractors)
+        loss_local /= len(self.extractors)
+
+        total = loss_global + 0.2 * loss_local
+        if not isinstance(total, torch.Tensor):
+            total = torch.tensor(total, dtype=torch.float32, device=(loss_global.device if isinstance(loss_global, torch.Tensor) else None))
+
+        return total

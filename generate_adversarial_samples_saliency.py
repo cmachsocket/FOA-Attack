@@ -71,6 +71,7 @@ from saliency_loss import (
     SaliencySuppressionReconstructionLossV2,
     SaliencySuppressionReconstructionLossV3,
     SaliencySuppressionReconstructionLossV4A,
+    SaliencySuppressionReconstructionLossV4B,
 )
 from semantic_distance_loss import SemanticDistanceLoss
 
@@ -90,6 +91,7 @@ SALIENCY_LOSS_MAP = {
     "v2": SaliencySuppressionReconstructionLossV2,
     "v3": SaliencySuppressionReconstructionLossV3,
     "v4a": SaliencySuppressionReconstructionLossV4A,
+    "v4b": SaliencySuppressionReconstructionLossV4B,
 }
 
 
@@ -150,6 +152,17 @@ def get_saliency_loss(cfg: MainConfig, models: List[nn.Module], version: str = "
             pca_k=getattr(cfg.model, 'pca_k', 64),
             suppress_scale=getattr(cfg.model, 'suppress_scale', 1.0),
             reconstruct_scale=getattr(cfg.model, 'reconstruct_scale', 1.0),
+        )
+    elif version == "v4b":
+        saliency_loss = loss_class(
+            extractors=models,
+            high_ratio=getattr(cfg.model, 'high_ratio', 0.1),
+            mid_ratio=getattr(cfg.model, 'mid_ratio', 0.2),
+            high_alpha=getattr(cfg.model, 'high_alpha', 1.2),
+            mid_alpha=getattr(cfg.model, 'mid_alpha', 1.0),
+            low_alpha=getattr(cfg.model, 'low_alpha', 0.5),
+            pca_k=getattr(cfg.model, 'pca_k', 64),
+            suppress_scale=getattr(cfg.model, 'suppress_scale', 1.0),
         )
     elif version == "v3":
         saliency_loss = loss_class(
