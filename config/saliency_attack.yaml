@@ -26,7 +26,7 @@ model:
   
   # 显著性损失版本: v1 (基础), v2 (注意力), v3 (多层抑制),
   #   semantic_distance (语义距离自适应 alpha), v4a (PCA子空间抑制+加法重建)
-  saliency_loss_version: semantic_distance
+  saliency_loss_version: v4a
   
   # 显著性比例：抑制前 X% 高显著区域（仅 v1/v2/semantic_distance 使用）
   saliency_ratio: 1

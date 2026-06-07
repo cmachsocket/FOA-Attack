@@ -21,6 +21,7 @@ from surrogates import (
     ClipL336FeatureExtractor,
     ClipB32FeatureExtractor,
     ClipLaionFeatureExtractor,
+    InternVL3FeatureExtractor,
     EnsembleFeatureExtractor_ot,
     EnsembleFeatureLoss_OT_foa_attack,
     EnsembleFeatureLoss,
@@ -48,7 +49,8 @@ BACKBONE_MAP = {
     "L336": ClipL336FeatureExtractor,
     "B16": ClipB16FeatureExtractor,
     "B32": ClipB32FeatureExtractor,
-    "Laion": ClipLaionFeatureExtractor
+    "Laion": ClipLaionFeatureExtractor,
+    "InternVL3": InternVL3FeatureExtractor,
 }
 
 # -----------------------

@@ -56,7 +56,7 @@ class ModelConfig:
         "B16",
         "B32",
         "Laion",
-    )  # List of models to use: L336, B16, B32, Laion
+    )  # List of models to use: L336, B16, B32, Laion, InternVL3
     use_gram_loss: bool = False        # 新增：启用 Gram Matrix 风格损失
     gram_loss_weight: float = 1.0      # 新增：Gram loss 权重
     

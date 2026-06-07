@@ -51,6 +51,7 @@ from surrogates import (
     ClipL336FeatureExtractor,
     ClipB32FeatureExtractor,
     ClipLaionFeatureExtractor,
+    InternVL3FeatureExtractor,
     EnsembleFeatureLoss,
     EnsembleFeatureLoss_OT_Auto,
     EnsembleFeatureExtractor,
@@ -67,6 +68,7 @@ BACKBONE_MAP: Dict[str, type] = {
     "B16": ClipB16FeatureExtractor,
     "B32": ClipB32FeatureExtractor,
     "Laion": ClipLaionFeatureExtractor,
+    "InternVL3": InternVL3FeatureExtractor,
 }
 
 
@@ -339,7 +341,7 @@ def fgsm_attack(
         # Forward pass
         adv_image = image_org + delta
 
-        adv_features,adv_features_local = ensemble_extractor(adv_image)
+        adv_features,adv_features_local,_ = ensemble_extractor(adv_image)
 
         # Calculate metrics
         metrics = {
@@ -353,7 +355,7 @@ def fgsm_attack(
 
         if cfg.model.use_source_crop:
             local_cropped = source_crop(adv_image)
-            local_features,local_features_local = ensemble_extractor(local_cropped)
+            local_features,local_features_local,_ = ensemble_extractor(local_cropped)
             local_sim = ensemble_loss(local_features,local_features_local)
             loss = local_sim
             metrics["local_similarity"] = local_sim.item()
@@ -448,7 +450,7 @@ def mifgsm_attack(
 
         # Forward pass
         adv_image = image_org + delta
-        adv_features, adv_features_local = ensemble_extractor(adv_image)
+        adv_features, adv_features_local, _ = ensemble_extractor(adv_image)
 
         # Calculate metrics
         metrics = {
@@ -462,7 +464,7 @@ def mifgsm_attack(
 
         if cfg.model.use_source_crop:
             local_cropped = source_crop(adv_image)
-            local_features, local_features_local = ensemble_extractor(local_cropped)
+            local_features, local_features_local, _ = ensemble_extractor(local_cropped)
             local_sim = ensemble_loss(local_features, local_features_local)
             loss = local_sim
             metrics["local_similarity"] = local_sim.item()
@@ -551,7 +553,7 @@ def pgd_attack(
 
         # Forward pass
         adv_image = image_org + delta
-        adv_features, adv_features_local = ensemble_extractor(adv_image)
+        adv_features, adv_features_local, _ = ensemble_extractor(adv_image)
 
         # Calculate metrics
         metrics = {

@@ -84,6 +84,7 @@ BACKBONE_MAP: Dict[str, type] = {
     "B16": ClipB16FeatureExtractor,
     "B32": ClipB32FeatureExtractor,
     "Laion": ClipLaionFeatureExtractor,
+    "InternVL3": InternVL3FeatureExtractor,
 }
 
 # 损失版本映射
