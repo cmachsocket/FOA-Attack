@@ -61,6 +61,7 @@ from surrogates import (
     ClipL336FeatureExtractor,
     ClipB32FeatureExtractor,
     ClipLaionFeatureExtractor,
+    InternVL3FeatureExtractor,
     EnsembleFeatureLoss,
     EnsembleFeatureExtractor,
     EnsembleFeatureExtractor_ot,

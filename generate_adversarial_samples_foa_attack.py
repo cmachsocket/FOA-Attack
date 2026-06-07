@@ -565,7 +565,7 @@ def pgd_attack(
 
         if cfg.model.use_source_crop:
             local_cropped = source_crop(adv_image)
-            local_features, local_features_local = ensemble_extractor(local_cropped)
+            local_features, local_features_local, _ = ensemble_extractor(local_cropped)
             local_sim = ensemble_loss(local_features, local_features_local)
             loss = -local_sim  # maximize similarity
             metrics["local_similarity"] = local_sim.item()
